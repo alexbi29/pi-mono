@@ -33,6 +33,7 @@ export interface SettingsConfig {
 	showImages: boolean;
 	autoResizeImages: boolean;
 	blockImages: boolean;
+	imageMaxWidthCells: number;
 	enableSkillCommands: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
@@ -58,6 +59,7 @@ export interface SettingsCallbacks {
 	onShowImagesChange: (enabled: boolean) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
+	onImageMaxWidthCellsChange: (width: number) => void;
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
@@ -313,9 +315,19 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Skill commands toggle (insert after block-images)
+		// Image max width toggle (insert after block-images)
 		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
 		items.splice(blockImagesIndex + 1, 0, {
+			id: "image-max-width",
+			label: "Image display width",
+			description: "Maximum image width in terminal columns",
+			currentValue: String(config.imageMaxWidthCells),
+			values: ["30", "40", "50", "60", "80", "100", "120", "150", "180"],
+		});
+
+		// Skill commands toggle (insert after image-max-width)
+		const imageMaxWidthIndex = items.findIndex((item) => item.id === "image-max-width");
+		items.splice(imageMaxWidthIndex + 1, 0, {
 			id: "skill-commands",
 			label: "Skill commands",
 			description: "Register skills as /skill:name commands",
@@ -383,6 +395,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "block-images":
 						callbacks.onBlockImagesChange(newValue === "true");
+						break;
+					case "image-max-width":
+						callbacks.onImageMaxWidthCellsChange(parseInt(newValue, 10));
 						break;
 					case "skill-commands":
 						callbacks.onEnableSkillCommandsChange(newValue === "true");

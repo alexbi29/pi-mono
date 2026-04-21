@@ -2633,6 +2633,7 @@ export class InteractiveMode {
 									content.arguments,
 									{
 										showImages: this.settingsManager.getShowImages(),
+										maxWidthCells: this.settingsManager.getImageMaxWidthCells(),
 									},
 									this.getRegisteredToolDefinition(content.name),
 									this.ui,
@@ -2701,6 +2702,7 @@ export class InteractiveMode {
 						event.args,
 						{
 							showImages: this.settingsManager.getShowImages(),
+							maxWidthCells: this.settingsManager.getImageMaxWidthCells(),
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -3031,7 +3033,10 @@ export class InteractiveMode {
 							content.name,
 							content.id,
 							content.arguments,
-							{ showImages: this.settingsManager.getShowImages() },
+							{
+								showImages: this.settingsManager.getShowImages(),
+								maxWidthCells: this.settingsManager.getImageMaxWidthCells(),
+							},
 							this.getRegisteredToolDefinition(content.name),
 							this.ui,
 							this.sessionManager.getCwd(),
@@ -3652,6 +3657,7 @@ export class InteractiveMode {
 					showImages: this.settingsManager.getShowImages(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
+					imageMaxWidthCells: this.settingsManager.getImageMaxWidthCells(),
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
@@ -3689,6 +3695,14 @@ export class InteractiveMode {
 					},
 					onBlockImagesChange: (blocked) => {
 						this.settingsManager.setBlockImages(blocked);
+					},
+					onImageMaxWidthCellsChange: (width) => {
+						this.settingsManager.setImageMaxWidthCells(width);
+						for (const child of this.chatContainer.children) {
+							if (child instanceof ToolExecutionComponent) {
+								child.setMaxWidthCells(width);
+							}
+						}
 					},
 					onEnableSkillCommandsChange: (enabled) => {
 						this.settingsManager.setEnableSkillCommands(enabled);

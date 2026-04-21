@@ -7,6 +7,7 @@ import { theme } from "../theme/theme.js";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
+	maxWidthCells?: number;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -23,6 +24,7 @@ export class ToolExecutionComponent extends Container {
 	private args: any;
 	private expanded = false;
 	private showImages: boolean;
+	private maxWidthCells: number;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition<any, any>;
 	private builtInToolDefinition?: ToolDefinition<any, any>;
@@ -54,6 +56,7 @@ export class ToolExecutionComponent extends Container {
 		this.toolDefinition = toolDefinition;
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
 		this.showImages = options.showImages ?? true;
+		this.maxWidthCells = options.maxWidthCells ?? 60;
 		this.ui = ui;
 		this.cwd = cwd;
 
@@ -205,6 +208,14 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setMaxWidthCells(width: number): void {
+		this.maxWidthCells = width;
+		for (const img of this.imageComponents) {
+			img.invalidate();
+		}
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -312,7 +323,7 @@ export class ToolExecutionComponent extends Container {
 						imageData,
 						imageMimeType,
 						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
-						{ maxWidthCells: 60 },
+						{ maxWidthCells: this.maxWidthCells },
 					);
 					this.imageComponents.push(imageComponent);
 					this.addChild(imageComponent);

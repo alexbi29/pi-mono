@@ -30,6 +30,7 @@ export interface TerminalSettings {
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
+	maxWidthCells?: number; // default: 60 - max terminal columns for inline image display
 }
 
 export interface ThinkingBudgetsSettings {
@@ -899,6 +900,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.images.blockImages = blocked;
 		this.markModified("images", "blockImages");
+		this.save();
+	}
+
+	getImageMaxWidthCells(): number {
+		return this.settings.images?.maxWidthCells ?? 60;
+	}
+
+	setImageMaxWidthCells(width: number): void {
+		if (!this.globalSettings.images) {
+			this.globalSettings.images = {};
+		}
+		this.globalSettings.images.maxWidthCells = width;
+		this.markModified("images", "maxWidthCells");
 		this.save();
 	}
 

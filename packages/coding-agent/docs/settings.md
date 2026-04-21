@@ -111,6 +111,7 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
+| `images.maxWidthCells` | number | `60` | Maximum image display width in terminal columns |
 
 ### Shell
 
