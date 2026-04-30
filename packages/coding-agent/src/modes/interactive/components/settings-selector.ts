@@ -625,7 +625,7 @@ export class SettingsSelectorComponent extends Container {
 				label: "Image width",
 				description: "Preferred inline image width in terminal cells",
 				currentValue: String(config.imageWidthCells),
-				values: ["60", "80", "120"],
+				values: ["60", "120", "180"],
 			});
 		}
 
