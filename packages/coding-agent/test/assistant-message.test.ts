@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { TuiMouseEvent } from "@earendil-works/pi-tui";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -72,6 +72,60 @@ describe("AssistantMessageComponent", () => {
 
 		expect(rendered).toContain("Thinking...");
 		expect(rendered).toContain("Response was truncated before completion.");
+	});
+
+	test("replaces the hidden thinking label with stats once thinking finishes", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		try {
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
+
+			vi.setSystemTime(1000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]), true);
+			expect(stripAnsi(component.render(80).join("\n"))).toContain("Thinking...");
+
+			vi.setSystemTime(2250);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "private reasoning" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+			const rendered = stripAnsi(component.render(80).join("\n"));
+			expect(rendered).toContain("answer");
+			expect(rendered).toMatch(/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 1\.3s/);
+
+			// Streamed updates must not drift the frozen duration.
+			vi.setSystemTime(5000);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "private reasoning" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+			expect(stripAnsi(component.render(80).join("\n"))).toMatch(
+				/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 1\.3s/,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("shows tokens-only stats for hidden thinking when streaming timing is unavailable", () => {
+		initTheme("dark");
+
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first thought" },
+				{ type: "text", text: "answer" },
+			]),
+			true,
+		);
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		expect(rendered).toMatch(/Thinking\.\.\. out ~\d+/);
+		expect(rendered).not.toContain("tok/s");
 	});
 
 	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {

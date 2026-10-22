@@ -5,6 +5,7 @@
 ### Changed
 
 - `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
+- The hidden "Thinking..." label now shows the thinking phase's duration, estimated token count, and tokens/s once the thinking run completes, instead of staying a static label.
 
 ## [1.4.0] - 2026-10-21
 

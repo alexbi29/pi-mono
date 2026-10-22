@@ -8,6 +8,12 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
+const CHARS_PER_TOKEN = 3.5;
+
+function estimateTextTokens(text: string): number {
+	return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
 /**
  * Component that renders a complete assistant message
  */
@@ -24,6 +30,8 @@ export class AssistantMessageComponent extends Container {
 	private messageId?: string;
 	private timestamp?: string;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private thinkingRunStartMs = new Map<number, number>();
+	private thinkingRunEndMs = new Map<number, number>();
 
 	constructor(
 		message?: AssistantMessage,
@@ -81,6 +89,23 @@ export class AssistantMessageComponent extends Container {
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
+	}
+
+	/**
+	 * Hidden "Thinking..." run label; once the run's thinking phase is done,
+	 * stats replace it in place using the end-of-turn TPS format with only the
+	 * applicable items: TPS, estimated output tokens, and duration.
+	 */
+	private buildHiddenThinkingLabel(runIndex: number, thinkingBlocks: string[]): string {
+		const startMs = this.thinkingRunStartMs.get(runIndex);
+		const endMs = this.thinkingRunEndMs.get(runIndex);
+		const tokens = estimateTextTokens(thinkingBlocks.join("\n\n"));
+		if (startMs !== undefined && endMs !== undefined && endMs > startMs) {
+			const seconds = (endMs - startMs) / 1000;
+			const tokensPerSecond = tokens / seconds;
+			return `${this.hiddenThinkingLabel} TPS ${tokensPerSecond.toFixed(1)} tok/s. out ~${tokens.toLocaleString()}, ${seconds.toFixed(1)}s`;
+		}
+		return `${this.hiddenThinkingLabel} out ~${tokens.toLocaleString()}`;
 	}
 
 	override render(width: number): string[] {
@@ -152,9 +177,23 @@ export class AssistantMessageComponent extends Container {
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
 				const runIndex = thinkingRunIndex++;
+				// Record thinking-phase timing for the hidden run label: start on the
+				// first streaming update that shows the run, end once content follows
+				// the run or streaming stops. Stats replace "Thinking..." in place.
+				if (isStreaming && !this.thinkingRunStartMs.has(runIndex)) {
+					this.thinkingRunStartMs.set(runIndex, Date.now());
+				}
+				if ((i + 1 < message.content.length || !isStreaming) && !this.thinkingRunEndMs.has(runIndex)) {
+					this.thinkingRunEndMs.set(runIndex, Date.now());
+				}
+
 				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
+				const autoHidden = this.hideThinkingBlock && !this.thinkingVisibilityOverrides.has(runIndex);
+				const hiddenLabel = autoHidden
+					? this.buildHiddenThinkingLabel(runIndex, thinkingBlocks)
+					: this.hiddenThinkingLabel;
 				const thinkingComponent = hidden
-					? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
+					? new Text(theme.italic(theme.fg("thinkingText", hiddenLabel)), this.outputPad, 0)
 					: new Markdown(
 							thinkingBlocks.join("\n\n"),
 							this.outputPad,
