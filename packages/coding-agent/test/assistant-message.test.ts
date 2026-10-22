@@ -128,6 +128,123 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).not.toContain("tok/s");
 	});
 
+	test("ticks the elapsed time on the active hidden thinking label", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		try {
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
+
+			vi.setSystemTime(1000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]), true);
+			expect(stripAnsi(component.render(80).join("\n"))).toContain("Thinking... 0.0s");
+
+			vi.setSystemTime(2250);
+			expect(component.hasActiveThinkingRun()).toBe(true);
+			expect(component.refreshThinkingTick()).toBe(true);
+			expect(stripAnsi(component.render(80).join("\n"))).toContain("Thinking... 1.3s");
+			// Unchanged text is not reported as a refresh.
+			expect(component.refreshThinkingTick()).toBe(false);
+
+			vi.setSystemTime(5000);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "private reasoning" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+			expect(component.hasActiveThinkingRun()).toBe(false);
+			expect(stripAnsi(component.render(80).join("\n"))).toMatch(
+				/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~5, 4\.0s/,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("uses exact provider reasoning tokens once the message finishes", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "thinking", thinking: "private reasoning" },
+			{ type: "text", text: "answer" },
+		]);
+		message.usage.reasoning = 42;
+		const component = new AssistantMessageComponent(message, true);
+
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		expect(rendered).toContain("out 42");
+		expect(rendered).not.toContain("~");
+	});
+
+	test("coalesces finished thinking runs into one stats label", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		try {
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
+			vi.setSystemTime(1000);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first" },
+					{ type: "text", text: "middle" },
+				]),
+				true,
+			);
+			vi.setSystemTime(2000);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first" },
+					{ type: "text", text: "middle" },
+					{ type: "thinking", thinking: "second" },
+				]),
+				true,
+			);
+			vi.setSystemTime(4000);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first" },
+					{ type: "text", text: "middle" },
+					{ type: "thinking", thinking: "second" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+
+			const rendered = stripAnsi(component.render(80).join("\n"));
+			// One merged stats label for both finished runs.
+			expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
+			expect(rendered).toContain("middle");
+			expect(rendered).toContain("answer");
+			expect(rendered).toMatch(/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 3\.0s/);
+
+			// Clicking the merged label expands every merged run.
+			const width = 80;
+			const lines = component.render(width);
+			const labelRow = lines.findIndex((line) => stripAnsi(line).includes("Thinking..."));
+			expect(labelRow).toBeGreaterThanOrEqual(0);
+			const event: TuiMouseEvent = {
+				type: "click",
+				button: "left",
+				x: 1,
+				y: labelRow,
+				screenX: 1,
+				screenY: labelRow,
+				width,
+				height: lines.length,
+				shift: false,
+				alt: false,
+				ctrl: false,
+				clickCount: 1,
+			};
+			expect(component.handleMouse(event)?.handled).toBe(true);
+			const expanded = stripAnsi(component.render(width).join("\n"));
+			expect(expanded).toContain("first");
+			expect(expanded).toContain("second");
+			expect(expanded).toContain("middle");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {
 		initTheme("dark");
 

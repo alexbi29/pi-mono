@@ -958,6 +958,10 @@ export class SettingsManager {
 		return this.settings.showCacheMissNotices ?? SETTINGS_DEFAULTS.showCacheMissNotices;
 	}
 
+	getShowTurnUsage(): boolean {
+		return this.settings.showTurnUsage ?? SETTINGS_DEFAULTS.showTurnUsage;
+	}
+
 	getExternalEditorCommand(): string {
 		const configuredEditor = this.settings.externalEditor;
 		if (typeof configuredEditor === "string" && configuredEditor.trim() !== "") {
@@ -979,6 +983,12 @@ export class SettingsManager {
 	setShowCacheMissNotices(show: boolean): void {
 		this.globalSettings.showCacheMissNotices = show;
 		this.markModified("showCacheMissNotices");
+		this.save();
+	}
+
+	setShowTurnUsage(show: boolean): void {
+		this.globalSettings.showTurnUsage = show;
+		this.markModified("showTurnUsage");
 		this.save();
 	}
 

@@ -86,6 +86,8 @@ export interface UsageEntry extends SessionEntryBase {
 	usage: Usage;
 	/** Optional human-readable qualifier for usage notices. */
 	note?: string;
+	/** Wall-clock duration of the measured activity in milliseconds, when known. */
+	elapsedMs?: number;
 }
 
 export interface CompactionEntry<T = unknown> extends SessionEntryBase {
@@ -1241,7 +1243,14 @@ export class SessionManager {
 	}
 
 	/** Append model-attributed usage that does not participate in LLM context. Returns the appended entry. */
-	appendUsage(kind: string, provider: string, model: string, usage: Usage, note?: string): UsageEntry {
+	appendUsage(
+		kind: string,
+		provider: string,
+		model: string,
+		usage: Usage,
+		note?: string,
+		elapsedMs?: number,
+	): UsageEntry {
 		const entry: UsageEntry = {
 			type: "usage",
 			id: generateId(this.byId),
@@ -1252,6 +1261,7 @@ export class SessionManager {
 			model,
 			usage,
 			...(note ? { note } : {}),
+			...(elapsedMs !== undefined ? { elapsedMs } : {}),
 		};
 		this._appendEntry(entry);
 		return entry;

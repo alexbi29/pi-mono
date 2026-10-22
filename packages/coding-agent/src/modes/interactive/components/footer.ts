@@ -64,6 +64,7 @@ export class FooterComponent implements Component {
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
+	private streamingOutputRate: number | undefined;
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
 		this.session = session;
@@ -84,6 +85,11 @@ export class FooterComponent implements Component {
 	 */
 	invalidate(): void {
 		// No-op: git branch is cached/invalidated by provider
+	}
+
+	/** Live output rate (tok/s) while an assistant message is streaming; undefined when idle. */
+	setStreamingOutputRate(rate: number | undefined): void {
+		this.streamingOutputRate = rate;
 	}
 
 	/**
@@ -122,7 +128,9 @@ export class FooterComponent implements Component {
 		let latestCacheHitRate: number | undefined;
 
 		for (const entry of sessionManager.getEntries()) {
-			if (entry.type === "usage") {
+			// "turn" entries duplicate assistant-message usage and must not be
+			// counted again; cache_warm usage is extra and participates in totals.
+			if (entry.type === "usage" && entry.kind !== "turn") {
 				addUsageToTotals(usageTotals, entry.usage);
 			} else if (entry.type === "message" && entry.message.role === "assistant") {
 				addUsageToTotals(usageTotals, entry.message.usage);
@@ -212,6 +220,11 @@ export class FooterComponent implements Component {
 		statsParts.push(contextPercentStr);
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+		}
+
+		// Live output rate while the assistant is streaming
+		if (this.streamingOutputRate !== undefined) {
+			statsParts.push(theme.fg("dim", `~${this.streamingOutputRate} tok/s`));
 		}
 
 		let statsLeft = statsParts.join(" ");

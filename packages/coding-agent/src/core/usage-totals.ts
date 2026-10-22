@@ -1,5 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai/compat";
-import type { SessionEntry } from "./session-manager.ts";
+import type { SessionEntry, UsageEntry } from "./session-manager.ts";
 
 export interface UsageTotals {
 	input: number;
@@ -69,7 +69,7 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 		if (entry.type === "message" && entry.message.role === "assistant") {
 			key = `${entry.message.provider}/${entry.message.responseModel ?? entry.message.model}`;
 			usage = entry.message.usage;
-		} else if (entry.type === "usage") {
+		} else if (entry.type === "usage" && entry.kind !== "turn") {
 			key = `${entry.provider}/${entry.model}`;
 			usage = entry.usage;
 		} else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
@@ -96,4 +96,27 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 	}))
 		.filter((entry) => entry.cost > 0 || entry.tokens > 0)
 		.sort((a, b) => b.cost - a.cost);
+}
+
+/**
+ * One-line transcript text for a persisted per-turn usage entry, mirroring the
+ * layout of the classic extension line: TPS first, then out/in/cache/total,
+ * with duration last. TPS and duration are omitted when no elapsed time was
+ * recorded (e.g. entries loaded from older session files).
+ */
+export function formatTurnUsage(entry: UsageEntry): string {
+	const { input, output, cacheRead, cacheWrite, totalTokens } = entry.usage;
+	const total = totalTokens || input + output + cacheRead + cacheWrite;
+	const body = [
+		`out ${output.toLocaleString()}`,
+		`in ${input.toLocaleString()}`,
+		`cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}`,
+		`total ${total.toLocaleString()}`,
+	].join(", ");
+	const elapsedMs = entry.elapsedMs;
+	if (output > 0 && elapsedMs !== undefined && elapsedMs > 0) {
+		const seconds = elapsedMs / 1000;
+		return `TPS ${(output / seconds).toFixed(1)} tok/s. ${body}, ${seconds.toFixed(1)}s`;
+	}
+	return body;
 }

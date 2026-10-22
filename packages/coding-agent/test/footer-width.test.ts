@@ -220,6 +220,20 @@ describe("FooterComponent width handling", () => {
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
 	});
 
+	it("shows the live streaming output rate while set", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		footer.setStreamingOutputRate(82);
+		expect(stripAnsi(footer.render(120)[1])).toContain("~82 tok/s");
+
+		footer.setStreamingOutputRate(undefined);
+		expect(stripAnsi(footer.render(120)[1])).not.toContain("tok/s");
+	});
+
 	it("shows the latest cache hit rate when cache usage is present", () => {
 		const session = createSession({
 			sessionName: "",

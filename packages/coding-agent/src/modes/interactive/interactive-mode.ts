@@ -120,7 +120,7 @@ import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
-import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
+import { combineUsage, formatTurnUsage, getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
 import { copyToClipboard, readClipboardFilePaths, readClipboardText } from "../../utils/clipboard.ts";
@@ -136,7 +136,7 @@ import { checkForNewPiVersion, type LatestPiRelease } from "../../utils/version-
 import { reportBug } from "./bug-report.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import { ArminComponent } from "./components/armin.ts";
-import { AssistantMessageComponent } from "./components/assistant-message.ts";
+import { AssistantMessageComponent, CHARS_PER_TOKEN } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -506,6 +506,11 @@ export class InteractiveMode {
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private readonly entriesRenderedByBoundaryCompaction = new Set<string>();
 	private streamingMessage: AssistantMessage | undefined = undefined;
+	private turnStartedAtMs: number | undefined;
+	private thinkingTicker: NodeJS.Timeout | undefined;
+	private streamingRateChars = 0;
+	private streamingRateLastMs = 0;
+	private streamingRateEwma = 0;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3370,6 +3375,7 @@ export class InteractiveMode {
 
 		switch (event.type) {
 			case "agent_start":
+				this.turnStartedAtMs = Date.now();
 				this.pendingTools.clear();
 				// Restore main escape handler if retry handler is still active
 				// (retry success event fires later, but we need main handler now)
@@ -3405,6 +3411,9 @@ export class InteractiveMode {
 					this.ui.requestRender();
 				} else if (event.entry.type === "usage" && event.entry.kind === "cache_warm") {
 					this.addCacheWarmingUsage(event.entry);
+					this.ui.requestRender();
+				} else if (event.entry.type === "usage" && event.entry.kind === "turn") {
+					this.addTurnUsage(event.entry);
 					this.ui.requestRender();
 				} else if (event.entry.type === "custom_message" && event.entry.display) {
 					this.addMessageToChat(
@@ -3463,6 +3472,7 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.resetStreamingRate();
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -3482,6 +3492,8 @@ export class InteractiveMode {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage, true);
+					this.updateStreamingRate(this.streamingMessage);
+					this.updateThinkingTicker();
 
 					for (const content of this.streamingMessage.content) {
 						if (content.type === "toolCall") {
@@ -3528,6 +3540,8 @@ export class InteractiveMode {
 						this.streamingMessage.errorMessage = errorMessage;
 					}
 					this.streamingComponent.updateContent(this.streamingMessage, false);
+					this.clearStreamingRate();
+					this.clearThinkingTicker();
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
 						if (!errorMessage) {
@@ -3618,6 +3632,9 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
+				this.clearThinkingTicker();
+				this.clearStreamingRate();
+				this.appendTurnUsage(event.messages);
 
 				this.ui.requestRender();
 				break;
@@ -3990,7 +4007,12 @@ export class InteractiveMode {
 				continue;
 			}
 			if (isUsageSessionEntry(item)) {
-				this.addCacheWarmingUsage(item);
+				// Unknown usage kinds are intentionally dropped from the transcript.
+				if (item.kind === "cache_warm") {
+					this.addCacheWarmingUsage(item);
+				} else if (item.kind === "turn") {
+					this.addTurnUsage(item);
+				}
 				continue;
 			}
 			if (isCompactionCostNotice(item)) {
@@ -4084,7 +4106,10 @@ export class InteractiveMode {
 		if (this.renderer instanceof TuiAltScreen) this.renderer.resetTextSelection();
 		const messageMeta = new Map<AgentMessage, { id: string; timestamp: string }>();
 		const items = entries.flatMap((entry): RenderSessionItem[] => {
-			if (entry.type === "custom" || (entry.type === "usage" && entry.kind === "cache_warm")) {
+			if (
+				entry.type === "custom" ||
+				(entry.type === "usage" && (entry.kind === "cache_warm" || entry.kind === "turn"))
+			) {
 				return [entry];
 			}
 			const messages = sessionEntryToContextMessages(entry);
@@ -4104,6 +4129,101 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		const usage = formatCacheWarmingUsage(entry);
 		this.chatContainer.addChild(new ThemedText(() => theme.fg("dim", usage), 1, 0));
+	}
+
+	private addTurnUsage(entry: UsageEntry): void {
+		if (!this.settingsManager.getShowTurnUsage()) return;
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new ThemedText(() => theme.fg("dim", formatTurnUsage(entry)), 1, 0));
+	}
+
+	/**
+	 * Persist a per-turn usage line for the just-finished agent run: total usage
+	 * across the run's assistant messages plus the wall-clock duration. The
+	 * transcript line renders when `showTurnUsage` is enabled.
+	 */
+	private appendTurnUsage(messages: AgentMessage[]): void {
+		let usage: Usage | undefined;
+		let provider = "";
+		let model = "";
+		for (const message of messages) {
+			if (message.role !== "assistant") continue;
+			const messageUsage = message.usage;
+			if (!messageUsage) continue;
+			usage = usage ? combineUsage(usage, messageUsage) : messageUsage;
+			provider = message.provider;
+			model = message.responseModel ?? message.model;
+		}
+		const elapsedMs = this.turnStartedAtMs !== undefined ? Math.max(0, Date.now() - this.turnStartedAtMs) : undefined;
+		this.turnStartedAtMs = undefined;
+		if (!usage || usage.output <= 0) return;
+		this.sessionManager.appendUsage("turn", provider, model, usage, undefined, elapsedMs);
+	}
+
+	// ----------------------------------------------------------------------------
+	// Streaming niceties: ticking "Thinking... Ns" label and live footer tok/s
+	// ----------------------------------------------------------------------------
+
+	private updateThinkingTicker(): void {
+		if (this.streamingComponent?.hasActiveThinkingRun()) {
+			if (!this.thinkingTicker) {
+				this.thinkingTicker = setInterval(() => {
+					if (!this.streamingComponent?.hasActiveThinkingRun()) {
+						this.clearThinkingTicker();
+						return;
+					}
+					if (this.streamingComponent.refreshThinkingTick()) this.ui.requestRender();
+				}, 500);
+			}
+		} else {
+			this.clearThinkingTicker();
+		}
+	}
+
+	private clearThinkingTicker(): void {
+		if (this.thinkingTicker) {
+			clearInterval(this.thinkingTicker);
+			this.thinkingTicker = undefined;
+		}
+	}
+
+	private resetStreamingRate(): void {
+		this.streamingRateChars = 0;
+		this.streamingRateLastMs = 0;
+		this.streamingRateEwma = 0;
+	}
+
+	private clearStreamingRate(): void {
+		this.resetStreamingRate();
+		this.footer.setStreamingOutputRate(undefined);
+	}
+
+	/**
+	 * Estimate the current output rate from streamed text/thinking deltas (tool
+	 * call arguments are excluded) and surface it in the footer while streaming.
+	 */
+	private updateStreamingRate(message: AssistantMessage): void {
+		let chars = 0;
+		for (const content of message.content) {
+			if (content.type === "text") chars += content.text.length;
+			else if (content.type === "thinking") chars += content.thinking.length;
+		}
+		const now = Date.now();
+		const dtMs = now - this.streamingRateLastMs;
+		if (this.streamingRateLastMs > 0 && dtMs > 0 && chars >= this.streamingRateChars) {
+			const deltaTokens = (chars - this.streamingRateChars) / CHARS_PER_TOKEN;
+			const rate = deltaTokens / (dtMs / 1000);
+			this.streamingRateEwma = this.streamingRateEwma === 0 ? rate : this.streamingRateEwma * 0.7 + rate * 0.3;
+		}
+		this.streamingRateChars = chars;
+		this.streamingRateLastMs = now;
+		if (this.streamingRateEwma >= 1) {
+			this.footer.setStreamingOutputRate(Math.round(this.streamingRateEwma));
+		} else {
+			// Decayed (e.g. during a long tool-argument stream): drop the readout
+			// rather than show a stale rate.
+			this.footer.setStreamingOutputRate(undefined);
+		}
 	}
 
 	/**
@@ -4935,6 +5055,7 @@ export class InteractiveMode {
 					treeFilterMode: this.settingsManager.getTreeFilterMode(),
 					showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 					showCacheMissNotices: this.settingsManager.getShowCacheMissNotices(),
+					showTurnUsage: this.settingsManager.getShowTurnUsage(),
 					defaultProjectTrust: this.settingsManager.getDefaultProjectTrust(),
 					editorPaddingX: this.settingsManager.getEditorPaddingX(),
 					outputPad: this.settingsManager.getOutputPad(),
@@ -5040,6 +5161,10 @@ export class InteractiveMode {
 					},
 					onShowCacheMissNoticesChange: (shown) => {
 						this.settingsManager.setShowCacheMissNotices(shown);
+						this.rebuildChatFromMessages();
+					},
+					onShowTurnUsageChange: (shown) => {
+						this.settingsManager.setShowTurnUsage(shown);
 						this.rebuildChatFromMessages();
 					},
 					onCollapseChangelogChange: (collapsed) => {

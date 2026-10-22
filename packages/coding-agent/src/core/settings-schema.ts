@@ -249,6 +249,12 @@ export const SettingsSchema = Type.Object(
 				default: SETTINGS_DEFAULTS.showCacheMissNotices,
 			}),
 		),
+		showTurnUsage: Type.Optional(
+			Type.Boolean({
+				description: "Show a dim per-turn usage line (tokens, TPS, and duration) in the transcript.",
+				default: SETTINGS_DEFAULTS.showTurnUsage,
+			}),
+		),
 		externalEditor: Type.Optional(
 			Type.String({ description: "Command for Ctrl+G external editor; takes precedence over VISUAL and EDITOR." }),
 		),

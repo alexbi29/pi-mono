@@ -2,10 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- New `showTurnUsage` setting: a dim per-turn usage line (TPS, out/in/cache/total, duration) is appended to the transcript after each completed agent run.
+- The footer shows the live streaming output rate (`~82 tok/s`) while the assistant is generating.
+
 ### Changed
 
 - `pi update` for installs from the pi.dev installer no longer passes `--min-release-age=0` to `npm ci`. The release lockfile pins every package, so the flag had no effect, and security scanners that block it stopped the update ([#11262](https://github.com/earendil-works/pi/issues/11262))
-- The hidden "Thinking..." label now shows the thinking phase's duration, estimated token count, and tokens/s once the thinking run completes, instead of staying a static label.
+- The hidden "Thinking..." label now ticks the elapsed thinking time while streaming, and once the thinking run completes shows TPS with estimated (or exact provider-reported reasoning) tokens and duration; consecutive finished thinking runs coalesce into one stats label. Clicking the label still expands the raw thinking.
+- Tool call blocks no longer add blank lines above and below, so the colored boxes hug their content.
 
 ## [1.4.0] - 2026-10-21
 

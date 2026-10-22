@@ -4249,7 +4249,9 @@ export class AgentSession {
 		const usageTotals = createUsageTotals();
 
 		for (const entry of this.sessionManager.getEntries()) {
-			if (entry.type === "usage") {
+			// "turn" entries duplicate assistant-message usage and must not be
+			// counted again; cache_warm usage is extra and participates in totals.
+			if (entry.type === "usage" && entry.kind !== "turn") {
 				addUsageToTotals(usageTotals, entry.usage);
 			} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 				addUsageToTotals(usageTotals, entry.usage);

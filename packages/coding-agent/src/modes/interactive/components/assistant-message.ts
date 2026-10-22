@@ -8,10 +8,27 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
-const CHARS_PER_TOKEN = 3.5;
+export const CHARS_PER_TOKEN = 3.5;
 
-function estimateTextTokens(text: string): number {
+export function estimateTextTokens(text: string): number {
 	return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
+
+/** Label stats for one thinking run, or a merged group of finished runs. */
+interface HiddenThinkingGroup {
+	startMs?: number;
+	endMs?: number;
+	tokens: number;
+	exactTokens?: number;
+}
+
+interface ThinkingRunInfo extends HiddenThinkingGroup {
+	runIndex: number;
+	blocks: string[];
+	hasBlocks: boolean;
+	autoHidden: boolean;
+	finished: boolean;
+	hasContentAfter: boolean;
 }
 
 /**
@@ -32,6 +49,9 @@ export class AssistantMessageComponent extends Container {
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private thinkingRunStartMs = new Map<number, number>();
 	private thinkingRunEndMs = new Map<number, number>();
+	private activeTickRunIndex: number | undefined;
+	private tickLabel: Text | undefined;
+	private lastTickText: string | undefined;
 
 	constructor(
 		message?: AssistantMessage,
@@ -92,20 +112,51 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	/**
-	 * Hidden "Thinking..." run label; once the run's thinking phase is done,
-	 * stats replace it in place using the end-of-turn TPS format with only the
-	 * applicable items: TPS, estimated output tokens, and duration.
+	 * Hidden "Thinking..." label for one run or a merged group of runs. While the
+	 * run is still streaming it shows a ticking elapsed time; once done it uses
+	 * the end-of-turn TPS format with the applicable items: TPS, output tokens
+	 * (estimated with `~`, or exact provider-reported reasoning tokens when the
+	 * finished message reports them), and duration.
 	 */
-	private buildHiddenThinkingLabel(runIndex: number, thinkingBlocks: string[]): string {
-		const startMs = this.thinkingRunStartMs.get(runIndex);
-		const endMs = this.thinkingRunEndMs.get(runIndex);
-		const tokens = estimateTextTokens(thinkingBlocks.join("\n\n"));
-		if (startMs !== undefined && endMs !== undefined && endMs > startMs) {
-			const seconds = (endMs - startMs) / 1000;
-			const tokensPerSecond = tokens / seconds;
-			return `${this.hiddenThinkingLabel} TPS ${tokensPerSecond.toFixed(1)} tok/s. out ~${tokens.toLocaleString()}, ${seconds.toFixed(1)}s`;
+	private buildHiddenThinkingLabel(group: HiddenThinkingGroup): string {
+		const { startMs, endMs } = group;
+		const outTokenText = (): string =>
+			group.exactTokens !== undefined ? group.exactTokens.toLocaleString() : `~${group.tokens.toLocaleString()}`;
+		if (startMs === undefined) {
+			return `${this.hiddenThinkingLabel} out ${outTokenText()}`;
 		}
-		return `${this.hiddenThinkingLabel} out ~${tokens.toLocaleString()}`;
+		if (endMs === undefined) {
+			if (this.isStreaming) {
+				// Still streaming: show elapsed time; the ticker refreshes this label.
+				return `${this.hiddenThinkingLabel} ${((Date.now() - startMs) / 1000).toFixed(1)}s`;
+			}
+			return `${this.hiddenThinkingLabel} out ${outTokenText()}`;
+		}
+		if (endMs <= startMs) {
+			return `${this.hiddenThinkingLabel} out ${outTokenText()}`;
+		}
+		const seconds = (endMs - startMs) / 1000;
+		const tokens = group.exactTokens ?? group.tokens;
+		const tokenText = outTokenText();
+		const tokensPerSecond = tokens / seconds;
+		return `${this.hiddenThinkingLabel} TPS ${tokensPerSecond.toFixed(1)} tok/s. out ${tokenText}, ${seconds.toFixed(1)}s`;
+	}
+
+	/** True while a hidden auto-collapsed thinking run is still streaming. */
+	hasActiveThinkingRun(): boolean {
+		return this.activeTickRunIndex !== undefined && this.tickLabel !== undefined && this.isStreaming;
+	}
+
+	/** Refresh the ticking elapsed label. Returns true when the label text changed. */
+	refreshThinkingTick(): boolean {
+		if (!this.hasActiveThinkingRun()) return false;
+		const startMs = this.thinkingRunStartMs.get(this.activeTickRunIndex!);
+		if (startMs === undefined) return false;
+		const text = `${this.hiddenThinkingLabel} ${((Date.now() - startMs) / 1000).toFixed(1)}s`;
+		if (text === this.lastTickText) return false;
+		this.lastTickText = text;
+		this.tickLabel!.setText(theme.italic(theme.fg("thinkingText", text)));
+		return true;
 	}
 
 	override render(width: number): string[] {
@@ -122,6 +173,9 @@ export class AssistantMessageComponent extends Container {
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
+		this.activeTickRunIndex = undefined;
+		this.tickLabel = undefined;
+		this.lastTickText = undefined;
 
 		// Clear content container
 		this.contentContainer.clear();
@@ -134,8 +188,87 @@ export class AssistantMessageComponent extends Container {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
+		// Pre-pass: enumerate thinking runs (adjacent thinking blocks merge into one
+		// run). Records streaming timings and groups runs for label merging.
+		const runList: ThinkingRunInfo[] = [];
+		{
+			let runIndex = 0;
+			for (let i = 0; i < message.content.length; i++) {
+				if (message.content[i].type !== "thinking") continue;
+				const blocks: string[] = [];
+				let lastIdx = i;
+				for (; i < message.content.length; i++) {
+					const c = message.content[i];
+					if (c.type !== "thinking") break;
+					lastIdx = i;
+					const thinking = c.thinking.trim();
+					if (thinking) blocks.push(thinking);
+				}
+				i--;
+				const idx = runIndex++;
+				// Start on the first streaming update that shows the run, end once
+				// content follows the run or streaming stops.
+				if (isStreaming && !this.thinkingRunStartMs.has(idx)) {
+					this.thinkingRunStartMs.set(idx, Date.now());
+				}
+				if ((lastIdx + 1 < message.content.length || !isStreaming) && !this.thinkingRunEndMs.has(idx)) {
+					this.thinkingRunEndMs.set(idx, Date.now());
+				}
+				runList.push({
+					runIndex: idx,
+					blocks,
+					hasBlocks: blocks.length > 0,
+					autoHidden: this.hideThinkingBlock && !this.thinkingVisibilityOverrides.has(idx),
+					finished: this.thinkingRunEndMs.has(idx),
+					hasContentAfter: message.content
+						.slice(lastIdx + 1)
+						.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim())),
+					startMs: this.thinkingRunStartMs.get(idx),
+					endMs: this.thinkingRunEndMs.get(idx),
+					tokens: estimateTextTokens(blocks.join("\n\n")),
+				});
+			}
+		}
+
+		// Exact provider-reported reasoning tokens are known only at message end.
+		// They describe the whole message, so they are only usable when every run
+		// collapses into the single auto-hidden label.
+		const exactReasoningTokens =
+			!isStreaming &&
+			typeof message.usage.reasoning === "number" &&
+			message.usage.reasoning > 0 &&
+			runList.length > 0 &&
+			runList.every((run) => !run.hasBlocks || run.autoHidden)
+				? message.usage.reasoning
+				: undefined;
+
+		// Merge all finished auto-hidden runs into one label to save vertical space.
+		// The first such run renders the merged label; the rest render nothing.
+		let mergedRun: (HiddenThinkingGroup & { runIndices: number[] }) | undefined;
+		for (const run of runList) {
+			if (!run.hasBlocks || !run.autoHidden || !run.finished) continue;
+			if (!mergedRun) {
+				mergedRun = {
+					runIndices: [run.runIndex],
+					startMs: run.startMs,
+					endMs: run.endMs,
+					tokens: run.tokens,
+					exactTokens: exactReasoningTokens,
+				};
+			} else {
+				mergedRun.runIndices.push(run.runIndex);
+				mergedRun.tokens += run.tokens;
+				if (run.startMs !== undefined && (mergedRun.startMs === undefined || run.startMs < mergedRun.startMs)) {
+					mergedRun.startMs = run.startMs;
+				}
+				if (run.endMs !== undefined && (mergedRun.endMs === undefined || run.endMs > mergedRun.endMs)) {
+					mergedRun.endMs = run.endMs;
+				}
+			}
+		}
+
 		// Render content in order
-		let thinkingRunIndex = 0;
+		let thinkRunOrdinal = 0;
 		for (let i = 0; i < message.content.length; i++) {
 			const content = message.content[i];
 			if (content.type === "text" && content.text.trim()) {
@@ -153,49 +286,40 @@ export class AssistantMessageComponent extends Container {
 					}),
 				);
 			} else if (content.type === "thinking") {
-				const thinkingBlocks: string[] = [];
-				for (; i < message.content.length; i++) {
-					const thinkingContent = message.content[i];
-					if (thinkingContent.type !== "thinking") {
-						break;
-					}
-					const thinking = thinkingContent.thinking.trim();
-					if (thinking) {
-						thinkingBlocks.push(thinking);
-					}
-				}
+				// Advance over the whole adjacent thinking group; run metadata comes
+				// from the pre-pass, in the same content order.
+				while (i < message.content.length && message.content[i].type === "thinking") i++;
 				i--;
-
-				if (thinkingBlocks.length === 0) {
+				const runInfo = runList[thinkRunOrdinal++];
+				if (!runInfo || !runInfo.hasBlocks) {
 					continue;
 				}
 
-				// Add spacing only when another visible assistant content block follows.
-				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
-				const hasVisibleContentAfter = message.content
-					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
-
-				const runIndex = thinkingRunIndex++;
-				// Record thinking-phase timing for the hidden run label: start on the
-				// first streaming update that shows the run, end once content follows
-				// the run or streaming stops. Stats replace "Thinking..." in place.
-				if (isStreaming && !this.thinkingRunStartMs.has(runIndex)) {
-					this.thinkingRunStartMs.set(runIndex, Date.now());
-				}
-				if ((i + 1 < message.content.length || !isStreaming) && !this.thinkingRunEndMs.has(runIndex)) {
-					this.thinkingRunEndMs.set(runIndex, Date.now());
+				// Finished auto-hidden runs beyond the first merge into the group label;
+				// visible (click-expanded) and still-streaming runs render individually.
+				if (runInfo.autoHidden && runInfo.finished && mergedRun && mergedRun.runIndices[0] !== runInfo.runIndex) {
+					continue;
 				}
 
-				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
-				const autoHidden = this.hideThinkingBlock && !this.thinkingVisibilityOverrides.has(runIndex);
-				const hiddenLabel = autoHidden
-					? this.buildHiddenThinkingLabel(runIndex, thinkingBlocks)
-					: this.hiddenThinkingLabel;
+				const hidden = this.thinkingVisibilityOverrides.get(runInfo.runIndex) ?? this.hideThinkingBlock;
+				const renderedGroup = runInfo.autoHidden && runInfo.finished && mergedRun ? mergedRun : runInfo;
 				const thinkingComponent = hidden
-					? new Text(theme.italic(theme.fg("thinkingText", hiddenLabel)), this.outputPad, 0)
+					? (() => {
+							// Finished runs always show stats, so a click-collapsed merged
+							// run self-heals back into a stats label once re-rendered.
+							const labelText =
+								runInfo.autoHidden || runInfo.finished
+									? this.buildHiddenThinkingLabel(renderedGroup)
+									: this.hiddenThinkingLabel;
+							const label = new Text(theme.italic(theme.fg("thinkingText", labelText)), this.outputPad, 0);
+							if (runInfo.autoHidden && !runInfo.finished) {
+								this.activeTickRunIndex = runInfo.runIndex;
+								this.tickLabel = label;
+							}
+							return label;
+						})()
 					: new Markdown(
-							thinkingBlocks.join("\n\n"),
+							runInfo.blocks.join("\n\n"),
 							this.outputPad,
 							0,
 							this.markdownTheme,
@@ -213,15 +337,19 @@ export class AssistantMessageComponent extends Container {
 								),
 							},
 						);
+				const labelRuns =
+					runInfo.autoHidden && runInfo.finished && mergedRun ? mergedRun.runIndices : [runInfo.runIndex];
 				this.contentContainer.addChild(
 					new MouseRegion(thinkingComponent, (event) => {
 						if (event.type !== "click" || event.button !== "left") return undefined;
-						this.thinkingVisibilityOverrides.set(runIndex, !hidden);
+						for (const idx of labelRuns) this.thinkingVisibilityOverrides.set(idx, !hidden);
 						if (this.lastMessage) this.updateContent(this.lastMessage);
 						return { handled: true };
 					}),
 				);
-				if (hasVisibleContentAfter) {
+				// Add spacing only when another visible assistant content block follows.
+				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
+				if (runInfo.hasContentAfter) {
 					this.contentContainer.addChild(new Spacer(1));
 				}
 			}
