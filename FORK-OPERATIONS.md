@@ -42,10 +42,23 @@ differ per client), which broke updates. The GitHub API is fresh per request.
 
 ## Versioning
 
-Fork versions are always **one patch above the upstream npm version they are based on**
-(upstream 1.5.0 -> fork 1.5.1, then 1.5.2, ...). Pre-release suffixes like `1.5.0-fork.1`
-sort below the release in semver, so `pi update`'s `isNewerPackageVersion` would never
-see them as updates.
+Fork versions are `<upstream-base>-<n>`: the first fork release on upstream
+1.5.0 is `1.5.0-1`, then `1.5.0-2`, ... After ingesting upstream 1.6.0, the
+next release is `1.6.0-1` (the counter restarts on a fresh base). Numeric
+prerelease identifiers compare numerically in semver, so the fork chain always
+upgrades (`1.5.0-1 < 1.5.0-2 < ... < 1.6.0-1`) and never exhausts (letters
+would stop at `z`; `-aa` sorts below `-z`).
+
+`pi update`'s version check compares against the installed version, so a
+machine on the fork chain upgrades automatically. A machine on a pre-scheme
+release (old patch+1 numbering like 1.4.x) cannot see `1.4.0-1` as newer
+(`1.4.x > 1.4.0-1` by semver) - the first new-scheme release needs one manual
+hop per machine: `npm install -g <tarball-url>` (done once during the switch).
+
+Pre-release suffixes sort below the release, so a machine on pure upstream
+`1.5.0` (never reached through our distribution) would not be offered
+`1.5.0-1` - irrelevant in practice since our binaries only come from our
+releases.
 
 ## Releasing (run on the Mac, from the pi-mono checkout)
 
@@ -53,18 +66,26 @@ see them as updates.
 bash fork-update.sh
 ```
 
-Reads `@earendil-works/pi-coding-agent` from the npm registry and compares it with the
-fork's current version:
+Releases are **batched**: run the script when upstream publishes, or when fork
+changes have accumulated - not per change. The script reads
+`@earendil-works/pi-coding-agent` from the npm registry, determines the base
+and next fork version as above, and:
 
-- **Upstream published something newer**: fetches `origin`, merges it in, auto-resolving
-  fork-only paths (version files take upstream, fork constants stay ours), then bumps all
-  workspace packages via `npm run version:` + `sync-versions.js` and regenerates the
-  install lock. Any other conflict stops the release with instructions.
-- **Fork-only release** (no upstream move): skips the merge, bumps the patch version.
+- **Upstream published something newer** (newer than our base): fetches
+  `origin`, merges it in, auto-resolving fork-only paths (version files take
+  upstream, fork constants stay ours), and resets the counter
+  (`upstream-1`). Any other conflict stops the release with instructions.
+- **Fork-only release** (no upstream move): increments the counter
+  (`base-n+1`).
 
-Then: `npm run check`, full build, staging + `npm pack` (workspace siblings bundled),
-`gh release create pi-<version>` with the tarball, commit, push `main`. The script is
-gitignored and lives only on the Mac; the GitHub releases API is the source of truth.
+Then: `npm run check`, full build, staging + `npm pack` (workspace siblings
+bundled), release notes, `gh release create pi-<version>` with the tarball,
+commit, push `main`.
+
+Release notes are generated: the ingested upstream's `## [X.Y.Z]` changelog
+section when there was an ingest, plus the fork commits since the previous
+`pi-*` tag. The script is gitignored and lives only on the Mac; the GitHub
+releases API is the source of truth.
 
 ## Updating pi on machines
 
