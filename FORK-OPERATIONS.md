@@ -60,6 +60,35 @@ Pre-release suffixes sort below the release, so a machine on pure upstream
 `1.5.0-1` - irrelevant in practice since our binaries only come from our
 releases.
 
+## Syncing upstream main between releases
+
+`fork-update.sh` ingests upstream only when its npm version moves above the fork
+base. Upstream `main` can move ahead without a publish (pre-release commits; the
+11-commit sync of 2026-11 is the reference case). To stay current without
+releasing:
+
+```sh
+git fetch origin
+git rev-list --count HEAD..origin/main   # 0 -> nothing to do
+git merge --no-edit origin/main
+npm run check
+git push fork main
+```
+
+Plain `git merge`; no auto-resolution runs. Fork-only paths and the fork version
+metadata (`1.4.0-1`) stay ours; on a conflict in a fork-only path
+(`version-check.ts`, `package-manager-cli.ts`, `version-check.test.ts`), take
+`--ours`. If the merge conflicts on version-carrying files (any `package.json`,
+lockfiles, `packages/ai/src/utils/version.ts`), upstream has probably just
+published - abort and run `bash fork-update.sh` instead, which ingests with
+`--theirs` and re-bumps to `<new-base>-1`.
+
+A manual sync does not disturb the pipeline: the next publish-time ingest merges
+on top of it, the version-file conflict against the new upstream version resolves
+with `--theirs` + re-bump as usual, and the synced upstream commits appear in the
+next release notes alongside the fork changes (notes use `git log --no-merges
+<last-pi-tag>..HEAD`).
+
 ## Releasing (run on the Mac, from the pi-mono checkout)
 
 ```sh

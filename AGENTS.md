@@ -29,7 +29,7 @@
 
 ## Commands
 
-- <a id="fork-operations"></a>**This is a fork**: fork-wide distribution, machine setup, and the release/update pipeline (fork-update.sh, GitHub releases, machine table) are documented in [FORK-OPERATIONS.md](FORK-OPERATIONS.md). Read it before touching version bumping, self-update, or release machinery.
+- <a id="fork-operations"></a>**This is a fork**: fork-wide distribution, machine setup, and the release/update pipeline (fork-update.sh, upstream sync, GitHub releases, machine table) are documented in [FORK-OPERATIONS.md](FORK-OPERATIONS.md). Read it before touching version bumping, self-update, or release machinery.
 
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
 - Never run `npm run build` or `npm test` unless requested by the user.
