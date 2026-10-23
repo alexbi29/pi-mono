@@ -3,6 +3,16 @@
 Tracked open items for the pi fork and its machines. See
 [FORK-OPERATIONS.md](FORK-OPERATIONS.md) for the setup.
 
+## Weekly routine
+
+- [ ] **Weekly** — check upstream: `npm view @earendil-works/pi-coding-agent version`
+      vs the fork base (`packages/coding-agent/package.json`). If it moved, or
+      fork changes have accumulated, run `bash fork-update.sh`, then `pi update`
+      on all machines (Mac, pook.lan, epyc.lan). Verify the release notes cover
+      the upstream changelog section.
+
+## Backlog
+
 - [x] Switch to `<upstream-base>-<n>` versioning (batched releases, generated
       release notes) and hop all machines to the first new-scheme release
       (1.4.0-1). Done 2026-10.
@@ -11,7 +21,6 @@ Tracked open items for the pi fork and its machines. See
       upstream publish exercises it live.
 - [ ] Deploy `.pi/extensions/monitor.ts` to pook.lan and epyc.lan
       (`~/.pi/agent/extensions/monitor.ts`) after the manual monitor test passes.
-- [ ] Consider removing the superseded `update.sh` (replaced by fork-update.sh).
 - [ ] Trace the `~/.pi` live-sync between machines (direction and scope) so
       config drift is predictable.
 - [ ] Verify the next batched release includes the thinking-toggle status-line
