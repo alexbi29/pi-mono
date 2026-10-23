@@ -19,8 +19,10 @@ Tracked open items for the pi fork and its machines. See
 - [ ] Stress-test `fork-update.sh` ingest mode: run a dry merge against a
       simulated upstream release (tag + version bump) before the first real
       upstream publish exercises it live.
-- [ ] Deploy `.pi/extensions/monitor.ts` to pook.lan and epyc.lan
-      (`~/.pi/agent/extensions/monitor.ts`) after the manual monitor test passes.
+- [x] Deploy the monitor extension: `~/.pi/agent/extensions/monitor.ts` on
+      pook.lan and epyc.lan (verified via headless probe); the Mac uses the
+      project copy `.pi/extensions/monitor.ts` (repo cwd; an agent-level copy
+      on the Mac conflicts with it). Done 2026-10.
 - [ ] Trace the `~/.pi` live-sync between machines (direction and scope) so
       config drift is predictable.
 - [ ] Verify the next batched release includes the thinking-toggle status-line
