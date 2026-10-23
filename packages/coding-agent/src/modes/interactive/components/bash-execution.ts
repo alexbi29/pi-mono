@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { Container, Loader, Text, type TUI } from "@earendil-works/pi-tui";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -38,9 +38,6 @@ export class BashExecutionComponent extends Container {
 		this.colorKey = excludeFromContext ? "dim" : "bashMode";
 		this.outputPad = outputPad;
 		const borderColor = (str: string) => theme.fg(this.colorKey, str);
-
-		// Add spacer
-		this.addChild(new Spacer(1));
 
 		// Top border
 		this.addChild(new DynamicBorder(borderColor));
