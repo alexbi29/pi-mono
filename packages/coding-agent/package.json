@@ -94,5 +94,12 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
-	}
+	},
+	"bundledDependencies": [
+		"@earendil-works/pi-agent-core",
+		"@earendil-works/pi-ai",
+		"@earendil-works/pi-codemode",
+		"@earendil-works/pi-mcp",
+		"@earendil-works/pi-tui"
+	]
 }
