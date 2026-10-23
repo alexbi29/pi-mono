@@ -32,6 +32,7 @@ interface Monitor {
 	intervalMs: number;
 	timeoutMs: number;
 	notifyOn: "change" | "success" | "fail";
+	report: boolean;
 	status: MonitorStatus;
 	lastOutput: string;
 	lastError?: string;
@@ -46,6 +47,9 @@ let shutdown = false;
 // Installed on the first monitor tool call; ui.notify needs a live session
 // context and is absent in headless runs.
 let notifyFn: ((message: string, type: "info" | "warning") => void) | undefined;
+// Wakes the agent (sendUserMessage always triggers a turn) so it can report
+// the condition, Claude Code monitor style.
+let wakeAgent: ((text: string) => void) | undefined;
 
 function runCheck(monitor: Monitor, cwd: string): void {
 	if (monitor.running || shutdown) return;
@@ -107,6 +111,14 @@ function maybeNotify(monitor: Monitor, previous: MonitorStatus): void {
 	} catch {
 		// never throw from the timer callback
 	}
+	// Wake the agent to report the flip; it gets queued if a turn is running.
+	if (monitor.report) {
+		try {
+			if (wakeAgent) wakeAgent(`[monitor] ${monitor.task} → ${monitor.status}${suffix}`);
+		} catch {
+			// never throw from the timer callback
+		}
+	}
 }
 
 function appendLog(
@@ -143,6 +155,13 @@ function appendLogMonitor(cwd: string, monitor: Monitor): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	wakeAgent = (text) => {
+		try {
+			pi.sendUserMessage(text);
+		} catch {
+			// agent busy, session gone, or headless run
+		}
+	};
 	pi.on("session_shutdown", () => {
 		shutdown = true;
 		for (const monitor of monitors.values()) {
@@ -156,10 +175,10 @@ export default function (pi: ExtensionAPI) {
 		label: "monitor",
 		description:
 			"Register a background check that runs a shell command every N seconds and notifies " +
-			"the user when its status changes. Returns immediately — do NOT sleep-poll: the " +
-			"monitor reports on its own. Use for conditions expected to last longer than " +
-			"~10 seconds (builds, deployments, server readiness, file arrival). The command " +
-			"should exit 0 on success and non-zero on failure.",
+			"the user — and wakes the agent to report — when its status changes. Returns " +
+			"immediately — do NOT sleep-poll: the monitor reports on its own. Use for conditions " +
+			"expected to last longer than ~10 seconds (builds, deployments, server readiness, " +
+			"file arrival). The command should exit 0 on success and non-zero on failure.",
 		parameters: Type.Object({
 			task: Type.String({
 				description: "Human-readable condition, e.g. \"deploy finished on epyc\".",
@@ -186,6 +205,13 @@ export default function (pi: ExtensionAPI) {
 							"\"success\": notify when the check starts passing; \"fail\": notify on failure.",
 					},
 				),
+			),
+			report: Type.Optional(
+				Type.Boolean({
+					description:
+						"Wake the agent to report when the condition fires (default true; " +
+						"set false for silent background checks).",
+				}),
 			),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -217,6 +243,7 @@ export default function (pi: ExtensionAPI) {
 				intervalMs: intervalSeconds * 1000,
 				timeoutMs: timeoutSeconds * 1000,
 				notifyOn: params.notifyOn ?? "change",
+				report: params.report ?? true,
 				status: "pending",
 				lastOutput: "",
 				running: false,
