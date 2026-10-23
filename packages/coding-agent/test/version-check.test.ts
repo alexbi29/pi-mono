@@ -35,20 +35,27 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
+		const fetchMock = vi.fn(async () => Response.json({ tag_name: "pi-1.2.3", assets: [] }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
 	});
 
-	it("uses the pi.dev version check api with a pi user agent", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+	it("uses the fork releases api with a pi user agent", async () => {
+		const fetchMock = vi.fn(async () =>
+			Response.json({
+				tag_name: "pi-1.2.4",
+				assets: [
+					{ name: "earendil-works-pi-coding-agent-1.2.4.tgz", browser_download_url: "https://example.com/pi.tgz" },
+				],
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");
 		expect(fetchMock).toHaveBeenCalledWith(
-			"https://raw.githubusercontent.com/alexbi29/pi-mono/main/latest-version.json",
+			"https://api.github.com/repos/alexbi29/pi-mono/releases/latest",
 			expect.objectContaining({
 				headers: expect.objectContaining({
 					"User-Agent": expect.stringMatching(/^pi\/1\.2\.3 /),
@@ -59,14 +66,24 @@ describe("version checks", () => {
 	});
 
 	it("retries a transient version request when explicitly requested", async () => {
+		const releaseJson = () =>
+			Response.json({
+				tag_name: "pi-1.2.4",
+				assets: [
+					{ name: "earendil-works-pi-coding-agent-1.2.4.tgz", browser_download_url: "https://example.com/pi.tgz" },
+				],
+			});
 		const fetchMock = vi
 			.fn()
 			.mockRejectedValueOnce(new Error("fetch failed"))
 			.mockRejectedValueOnce(new Error("fetch failed"))
-			.mockResolvedValueOnce(Response.json({ version: "1.2.4" }));
+			.mockResolvedValueOnce(releaseJson());
 		vi.stubGlobal("fetch", fetchMock);
 
-		await expect(getLatestPiRelease("1.2.3", { retry: true })).resolves.toEqual({ version: "1.2.4" });
+		await expect(getLatestPiRelease("1.2.3", { retry: true })).resolves.toEqual({
+			version: "1.2.4",
+			tarball: "https://example.com/pi.tgz",
+		});
 		expect(fetchMock).toHaveBeenCalledTimes(3);
 	});
 
@@ -89,26 +106,36 @@ describe("version checks", () => {
 		expect(formatVersionCheckError(error)).toBe("fetch failed (ETIMEDOUT, ENETUNREACH)");
 	});
 
-	it("returns the active package metadata from the version check api", async () => {
+	it("extracts the tarball asset from the fork release", async () => {
 		const fetchMock = vi.fn(async () =>
 			Response.json({
-				packageName: "@new-scope/pi",
-				version: "1.2.4",
+				tag_name: "pi-1.2.4",
+				assets: [
+					{ name: "ignore.txt", browser_download_url: "https://example.com/other" },
+					{ name: "earendil-works-pi-coding-agent-1.2.4.tgz", browser_download_url: "https://example.com/pi.tgz" },
+				],
 			}),
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({
-			packageName: "@new-scope/pi",
 			version: "1.2.4",
+			tarball: "https://example.com/pi.tgz",
 		});
 	});
 
-	it("returns update notes from the version check api", async () => {
-		const fetchMock = vi.fn(async () => Response.json({ note: " **Read this** ", version: "1.2.4" }));
+	it("ignores non-pi release tags", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ tag_name: "release-foo", assets: [] }));
 		vi.stubGlobal("fetch", fetchMock);
 
-		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ note: "**Read this**", version: "1.2.4" });
+		await expect(getLatestPiRelease("1.2.3")).resolves.toBeUndefined();
+	});
+
+	it("returns update notes from the fork release body", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ tag_name: "pi-1.2.4", body: " **Read this** ", assets: [] }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({ version: "1.2.4", note: "**Read this**" });
 	});
 
 	it("skips automatic api calls when version checks are disabled", async () => {
@@ -122,7 +149,7 @@ describe("version checks", () => {
 
 	it("allows direct api calls when automatic version checks are disabled", async () => {
 		process.env.PI_SKIP_VERSION_CHECK = "1";
-		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+		const fetchMock = vi.fn(async () => Response.json({ tag_name: "pi-1.2.4", assets: [] }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiVersion("1.2.3")).resolves.toBe("1.2.4");

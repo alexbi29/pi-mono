@@ -2,7 +2,7 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://raw.githubusercontent.com/alexbi29/pi-mono/main/latest-version.json";
+const LATEST_VERSION_URL = "https://api.github.com/repos/alexbi29/pi-mono/releases/latest";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -72,22 +72,32 @@ export async function getLatestPiRelease(
 	if (!response.ok) return undefined;
 
 	const data = (await response.json()) as {
-		packageName?: unknown;
-		version?: unknown;
-		tarball?: unknown;
-		note?: unknown;
+		tag_name?: unknown;
+		assets?: Array<{ name?: unknown; browser_download_url?: unknown }>;
+		body?: unknown;
 	};
-	if (typeof data.version !== "string" || !data.version.trim()) {
+	// Fork distribution: the release tag is "pi-<version>" and its asset is the
+	// installable tarball. The GitHub API is served fresh on every request.
+	if (typeof data.tag_name !== "string") {
 		return undefined;
 	}
-	const packageName =
-		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
-	const tarball = typeof data.tarball === "string" && data.tarball.trim() ? data.tarball.trim() : undefined;
-	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
+	const tagMatch = /^pi-(.+)$/.exec(data.tag_name);
+	if (!tagMatch) {
+		return undefined;
+	}
+	const tarballAsset = (data.assets ?? []).find(
+		(asset) =>
+			typeof asset.name === "string" &&
+			asset.name.startsWith("earendil-works-pi-coding-agent-") &&
+			asset.name.endsWith(".tgz") &&
+			typeof asset.browser_download_url === "string",
+	);
+	const note = typeof data.body === "string" && data.body.trim() ? data.body.trim() : undefined;
 	return {
-		version: data.version.trim(),
-		...(packageName ? { packageName } : {}),
-		...(tarball ? { tarball } : {}),
+		version: tagMatch[1],
+		...(tarballAsset && typeof tarballAsset.browser_download_url === "string"
+			? { tarball: tarballAsset.browser_download_url }
+			: {}),
 		...(note ? { note } : {}),
 	};
 }
