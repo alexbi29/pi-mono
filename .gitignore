@@ -48,3 +48,4 @@ collect.sh
 packages/agent/docs/extensions/pi-server-artifact/index.md
 update.sh
 fork-update.sh
+.pi/monitors.jsonl
