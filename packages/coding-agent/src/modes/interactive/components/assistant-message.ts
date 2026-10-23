@@ -10,6 +10,9 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 export const CHARS_PER_TOKEN = 3.5;
 
+/** Stream updates per run before a TPS claim is trustworthy (see buildHiddenThinkingLabel). */
+const MIN_TPS_UPDATE_SAMPLES = 4;
+
 export function estimateTextTokens(text: string): number {
 	return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
@@ -20,6 +23,8 @@ interface HiddenThinkingGroup {
 	endMs?: number;
 	tokens: number;
 	exactTokens?: number;
+	/** Number of stream updates that touched the run; too few makes TPS meaningless. */
+	updates: number;
 }
 
 interface ThinkingRunInfo extends HiddenThinkingGroup {
@@ -49,6 +54,7 @@ export class AssistantMessageComponent extends Container {
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
 	private thinkingRunStartMs = new Map<number, number>();
 	private thinkingRunEndMs = new Map<number, number>();
+	private thinkingRunUpdates = new Map<number, number>();
 	private activeTickRunIndex: number | undefined;
 	private tickLabel: Text | undefined;
 	private lastTickText: string | undefined;
@@ -132,7 +138,10 @@ export class AssistantMessageComponent extends Container {
 			}
 			return `${this.hiddenThinkingLabel} out ${outTokenText()}`;
 		}
-		if (endMs <= startMs) {
+		// TPS needs a meaningfully sampled span: a run delivered in a handful of
+		// buffered chunks (fast local servers) spans only a few event-loop ticks
+		// while its token count covers the whole trace, yielding absurd rates.
+		if (endMs <= startMs || group.updates < MIN_TPS_UPDATE_SAMPLES) {
 			return `${this.hiddenThinkingLabel} out ${outTokenText()}`;
 		}
 		const seconds = (endMs - startMs) / 1000;
@@ -214,6 +223,9 @@ export class AssistantMessageComponent extends Container {
 				if ((lastIdx + 1 < message.content.length || !isStreaming) && !this.thinkingRunEndMs.has(idx)) {
 					this.thinkingRunEndMs.set(idx, Date.now());
 				}
+				if (isStreaming) {
+					this.thinkingRunUpdates.set(idx, (this.thinkingRunUpdates.get(idx) ?? 0) + 1);
+				}
 				runList.push({
 					runIndex: idx,
 					blocks,
@@ -226,6 +238,7 @@ export class AssistantMessageComponent extends Container {
 					startMs: this.thinkingRunStartMs.get(idx),
 					endMs: this.thinkingRunEndMs.get(idx),
 					tokens: estimateTextTokens(blocks.join("\n\n")),
+					updates: this.thinkingRunUpdates.get(idx) ?? 0,
 				});
 			}
 		}
@@ -254,10 +267,12 @@ export class AssistantMessageComponent extends Container {
 					endMs: run.endMs,
 					tokens: run.tokens,
 					exactTokens: exactReasoningTokens,
+					updates: run.updates,
 				};
 			} else {
 				mergedRun.runIndices.push(run.runIndex);
 				mergedRun.tokens += run.tokens;
+				mergedRun.updates = Math.min(mergedRun.updates, run.updates);
 				if (run.startMs !== undefined && (mergedRun.startMs === undefined || run.startMs < mergedRun.startMs)) {
 					mergedRun.startMs = run.startMs;
 				}

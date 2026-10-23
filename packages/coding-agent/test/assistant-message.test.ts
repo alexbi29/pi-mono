@@ -79,11 +79,17 @@ describe("AssistantMessageComponent", () => {
 		vi.useFakeTimers();
 		try {
 			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
+			const thinking = [{ type: "thinking" as const, thinking: "private reasoning" }];
 
 			vi.setSystemTime(1000);
-			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]), true);
+			component.updateContent(createAssistantMessage(thinking), true);
 			expect(stripAnsi(component.render(80).join("\n"))).toContain("Thinking...");
 
+			// Three more stream updates so the run span is actually sampled.
+			vi.setSystemTime(1500);
+			component.updateContent(createAssistantMessage(thinking), true);
+			vi.setSystemTime(2000);
+			component.updateContent(createAssistantMessage(thinking), true);
 			vi.setSystemTime(2250);
 			component.updateContent(
 				createAssistantMessage([
@@ -92,9 +98,10 @@ describe("AssistantMessageComponent", () => {
 				]),
 				true,
 			);
+
 			const rendered = stripAnsi(component.render(80).join("\n"));
 			expect(rendered).toContain("answer");
-			expect(rendered).toMatch(/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 1\.3s/);
+			expect(rendered).toMatch(/Thinking\.\.\. TPS 4\.0 tok\/s\. out ~5, 1\.3s/);
 
 			// Streamed updates must not drift the frozen duration.
 			vi.setSystemTime(5000);
@@ -105,9 +112,7 @@ describe("AssistantMessageComponent", () => {
 				]),
 				true,
 			);
-			expect(stripAnsi(component.render(80).join("\n"))).toMatch(
-				/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 1\.3s/,
-			);
+			expect(stripAnsi(component.render(80).join("\n"))).toMatch(/Thinking\.\.\. TPS 4\.0 tok\/s\. out ~5, 1\.3s/);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -128,6 +133,34 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).not.toContain("tok/s");
 	});
 
+	test("does not claim TPS for short traces delivered in few stream updates", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		try {
+			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
+			vi.setSystemTime(1000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "a very short trace" }]), true);
+			// Only three updates total: the span is one or two event-loop ticks and
+			// would otherwise report an absurd rate.
+			vi.setSystemTime(1010);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "a very short trace" }]), true);
+			vi.setSystemTime(1020);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "a very short trace" },
+					{ type: "text", text: "answer" },
+				]),
+				true,
+			);
+
+			const rendered = stripAnsi(component.render(80).join("\n"));
+			expect(rendered).toMatch(/Thinking\.\.\. out ~\d+/);
+			expect(rendered).not.toContain("tok/s");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	test("ticks the elapsed time on the active hidden thinking label", () => {
 		initTheme("dark");
 		vi.useFakeTimers();
@@ -144,6 +177,12 @@ describe("AssistantMessageComponent", () => {
 			expect(stripAnsi(component.render(80).join("\n"))).toContain("Thinking... 1.3s");
 			// Unchanged text is not reported as a refresh.
 			expect(component.refreshThinkingTick()).toBe(false);
+
+			// Two more stream updates so the final span is actually sampled.
+			vi.setSystemTime(3000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]), true);
+			vi.setSystemTime(4000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]), true);
 
 			vi.setSystemTime(5000);
 			component.updateContent(
@@ -182,6 +221,12 @@ describe("AssistantMessageComponent", () => {
 		try {
 			const component = new AssistantMessageComponent(undefined, true, undefined, "Thinking...", 1);
 			vi.setSystemTime(1000);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "first" }]), true);
+			vi.setSystemTime(1010);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "first" }]), true);
+			vi.setSystemTime(1020);
+			component.updateContent(createAssistantMessage([{ type: "thinking", thinking: "first" }]), true);
+			vi.setSystemTime(1030);
 			component.updateContent(
 				createAssistantMessage([
 					{ type: "thinking", thinking: "first" },
@@ -189,7 +234,7 @@ describe("AssistantMessageComponent", () => {
 				]),
 				true,
 			);
-			vi.setSystemTime(2000);
+			vi.setSystemTime(1040);
 			component.updateContent(
 				createAssistantMessage([
 					{ type: "thinking", thinking: "first" },
@@ -198,7 +243,25 @@ describe("AssistantMessageComponent", () => {
 				]),
 				true,
 			);
-			vi.setSystemTime(4000);
+			vi.setSystemTime(1050);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first" },
+					{ type: "text", text: "middle" },
+					{ type: "thinking", thinking: "second" },
+				]),
+				true,
+			);
+			vi.setSystemTime(1060);
+			component.updateContent(
+				createAssistantMessage([
+					{ type: "thinking", thinking: "first" },
+					{ type: "text", text: "middle" },
+					{ type: "thinking", thinking: "second" },
+				]),
+				true,
+			);
+			vi.setSystemTime(1100);
 			component.updateContent(
 				createAssistantMessage([
 					{ type: "thinking", thinking: "first" },
@@ -214,7 +277,7 @@ describe("AssistantMessageComponent", () => {
 			expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
 			expect(rendered).toContain("middle");
 			expect(rendered).toContain("answer");
-			expect(rendered).toMatch(/Thinking\.\.\. TPS \d+\.\d+ tok\/s\. out ~\d+, 3\.0s/);
+			expect(rendered).toMatch(/Thinking\.\.\. TPS 40\.0 tok\/s\. out ~4, 0\.1s/);
 
 			// Clicking the merged label expands every merged run.
 			const width = 80;
