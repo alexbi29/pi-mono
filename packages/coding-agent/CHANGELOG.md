@@ -13,6 +13,10 @@
 - The hidden "Thinking..." label now ticks the elapsed thinking time while streaming, and once the thinking run completes shows TPS with estimated (or exact provider-reported reasoning) tokens and duration; consecutive finished thinking runs coalesce into one stats label. Clicking the label still expands the raw thinking.
 - Tool call blocks no longer add blank lines above and below, so the colored boxes hug their content.
 
+### Fixed
+
+- MCP sign-in now rejects authorization endpoints and other OAuth metadata URLs that are not `http:` or `https:`. Before, a malicious MCP server could supply a `file:` or custom protocol URL, which pi passed to the platform URL handler.
+
 ## [1.4.0] - 2026-10-21
 
 ### New Features
