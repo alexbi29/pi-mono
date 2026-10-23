@@ -2,12 +2,14 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+const LATEST_VERSION_URL = "https://raw.githubusercontent.com/alexbi29/pi-mono/main/latest-version.json";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
+	/** Fork distribution: URL of the tarball to install instead of an npm package. */
+	tarball?: string;
 	note?: string;
 }
 
@@ -72,6 +74,7 @@ export async function getLatestPiRelease(
 	const data = (await response.json()) as {
 		packageName?: unknown;
 		version?: unknown;
+		tarball?: unknown;
 		note?: unknown;
 	};
 	if (typeof data.version !== "string" || !data.version.trim()) {
@@ -79,10 +82,12 @@ export async function getLatestPiRelease(
 	}
 	const packageName =
 		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
+	const tarball = typeof data.tarball === "string" && data.tarball.trim() ? data.tarball.trim() : undefined;
 	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
 	return {
 		version: data.version.trim(),
-		packageName,
+		...(packageName ? { packageName } : {}),
+		...(tarball ? { tarball } : {}),
 		...(note ? { note } : {}),
 	};
 }

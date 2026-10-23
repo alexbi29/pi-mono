@@ -697,7 +697,8 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	}
 
 	const packageName = latestRelease.packageName ?? PACKAGE_NAME;
-	const installSpec = `${packageName}@${latestRelease.version}`;
+	// Fork distribution: install the release tarball from the fork's GitHub release.
+	const installSpec = latestRelease.tarball ?? `${packageName}@${latestRelease.version}`;
 	if (force || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
 		return {
 			packageName,
