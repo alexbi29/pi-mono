@@ -29,6 +29,8 @@
 
 ## Commands
 
+- <a id="fork-operations"></a>**This is a fork**: fork-wide distribution, machine setup, and the release/update pipeline (fork-update.sh, GitHub releases, machine table) are documented in [FORK-OPERATIONS.md](FORK-OPERATIONS.md). Read it before touching version bumping, self-update, or release machinery.
+
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
 - Never run `npm run build` or `npm test` unless requested by the user.
 - Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./test.sh` from the repo root. Otherwise run specific tests from the package root:
