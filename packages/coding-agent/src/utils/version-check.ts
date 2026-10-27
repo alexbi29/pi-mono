@@ -2,7 +2,8 @@ import { compare, valid } from "semver";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
-const LATEST_VERSION_URL = "https://api.github.com/repos/alexbi29/pi-mono/releases/latest";
+/** Fork distribution: the fork's GitHub releases feed the update check. */
+export const LATEST_VERSION_URL = "https://api.github.com/repos/alexbi29/pi-mono/releases/latest";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
