@@ -107,9 +107,16 @@ and next fork version as above, and:
 - **Fork-only release** (no upstream move): increments the counter
   (`base-n+1`).
 
-Then: `npm run check`, full build, staging + `npm pack` (workspace siblings
-bundled), release notes, `gh release create pi-<version>` with the tarball,
-commit, push `main`.
+Then: `npm run check`, full build, `./test.sh` (see below), staging + `npm pack`
+(workspace siblings bundled), release notes, `gh release create pi-<version>`
+with the tarball, commit, push `main`.
+
+The test gate exists because `npm run check` only type checks and lints, and the
+fork's behavior diverges from upstream in places upstream's own tests do not
+cover. `packages/env`'s suites drive the Rust `pi-env` daemon (CI builds it), so
+the script builds it when `cargo` is available and otherwise stops with
+instructions; `PI_SKIP_TESTS=1` skips the suite for an urgent release (log:
+`/tmp/pi-fork-tests.log`).
 
 Release notes are generated: the ingested upstream's `## [X.Y.Z]` changelog
 section when there was an ingest, plus the fork commits since the previous

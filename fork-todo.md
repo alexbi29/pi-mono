@@ -30,14 +30,15 @@ Tracked open items for the pi fork and its machines. See
       config drift is predictable.
 - [x] Verify the next batched release includes the thinking-toggle status-line
       removal (committed 2026-10 as `9e599fafc`). Shipped in 1.4.0-2.
-- [ ] Adapt the upstream tests that assume upstream's own update source and
-      spacing, which fail on the fork (`./test.sh`, 13 tests, pre-existing - not
-      sync damage: the test files and the fork-only sources they exercise are
-      unchanged across the syncs):
-      - `packages/coding-agent/test/package-command-paths.test.ts` (12) - self-update
-        tests mock the pi.dev `/api/latest-version` shape and patch+1 version math;
-        the fork reads the GitHub releases API and installs a tarball.
-      - `packages/coding-agent/test/user-message.test.ts` (1) - expects the blank
-        lines around content blocks that `1de5a113c` removed.
-      Note `packages/env` also needs `npm run build:daemon` (Rust) before its 6
-      SSH/conformance suites can run locally.
+- [x] Adapt the upstream tests that assumed upstream's own update source and
+      spacing (they failed on the fork: 13 tests under `./test.sh`). Done 2026-11:
+      `package-command-paths.test.ts` now mocks the fork's GitHub releases shape
+      (tarball asset, no `packageName`) via `mockForkReleaseFetch`, and
+      `user-message.test.ts` covers the fork's flush single-line layout. That
+      surfaced a real bug: with the flush layout the OSC-133 closing markers were
+      emitted *before* the opening one (`B, C, A`), so a one-line user message
+      carried a malformed shell-integration zone; order is now `A, B, C`.
+      Remaining `./test.sh` failures are only the 6 `packages/env` suites, which
+      need `npm run build:daemon` (Rust, as CI does).
+- [ ] Install cargo on the Mac so `packages/env`'s daemon suites run (they are the
+      only reason to reach for `PI_SKIP_TESTS=1` when releasing).
