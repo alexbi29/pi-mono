@@ -1,5 +1,13 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	MouseRegion,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
@@ -33,7 +41,6 @@ interface ThinkingRunInfo extends HiddenThinkingGroup {
 	hasBlocks: boolean;
 	autoHidden: boolean;
 	finished: boolean;
-	hasContentAfter: boolean;
 }
 
 /**
@@ -189,13 +196,17 @@ export class AssistantMessageComponent extends Container {
 		// Clear content container
 		this.contentContainer.clear();
 
-		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
-		);
-
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
-		}
+		// Spacers are added lazily, right before the next visible content block. This puts a blank
+		// line before the first visible block and after each visible thinking run that is followed
+		// by more visible content, while hidden thinking runs without a label contribute nothing.
+		let needsSpacer = true;
+		const addVisibleChild = (child: Component) => {
+			if (needsSpacer) {
+				this.contentContainer.addChild(new Spacer(1));
+				needsSpacer = false;
+			}
+			this.contentContainer.addChild(child);
+		};
 
 		// Pre-pass: enumerate thinking runs (adjacent thinking blocks merge into one
 		// run). Records streaming timings and groups runs for label merging.
@@ -232,9 +243,6 @@ export class AssistantMessageComponent extends Container {
 					hasBlocks: blocks.length > 0,
 					autoHidden: this.hideThinkingBlock && !this.thinkingVisibilityOverrides.has(idx),
 					finished: this.thinkingRunEndMs.has(idx),
-					hasContentAfter: message.content
-						.slice(lastIdx + 1)
-						.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim())),
 					startMs: this.thinkingRunStartMs.get(idx),
 					endMs: this.thinkingRunEndMs.get(idx),
 					tokens: estimateTextTokens(blocks.join("\n\n")),
@@ -289,7 +297,7 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(
+				addVisibleChild(
 					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
 						transform: createMarkdownTransform(
 							"assistant",
@@ -317,6 +325,10 @@ export class AssistantMessageComponent extends Container {
 				}
 
 				const hidden = this.thinkingVisibilityOverrides.get(runInfo.runIndex) ?? this.hideThinkingBlock;
+				// A hidden run with an empty label renders nothing, including no spacing.
+				if (hidden && !this.hiddenThinkingLabel.trim()) {
+					continue;
+				}
 				const renderedGroup = runInfo.autoHidden && runInfo.finished && mergedRun ? mergedRun : runInfo;
 				const thinkingComponent = hidden
 					? (() => {
@@ -354,7 +366,7 @@ export class AssistantMessageComponent extends Container {
 						);
 				const labelRuns =
 					runInfo.autoHidden && runInfo.finished && mergedRun ? mergedRun.runIndices : [runInfo.runIndex];
-				this.contentContainer.addChild(
+				addVisibleChild(
 					new MouseRegion(thinkingComponent, (event) => {
 						if (event.type !== "click" || event.button !== "left") return undefined;
 						for (const idx of labelRuns) this.thinkingVisibilityOverrides.set(idx, !hidden);
@@ -364,9 +376,7 @@ export class AssistantMessageComponent extends Container {
 				);
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
-				if (runInfo.hasContentAfter) {
-					this.contentContainer.addChild(new Spacer(1));
-				}
+				needsSpacer = true;
 			}
 		}
 

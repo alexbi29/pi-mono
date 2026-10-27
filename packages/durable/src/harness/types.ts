@@ -30,8 +30,10 @@ import type {
 	EntryQuery,
 	EntryRecord,
 	JsonObject,
+	Observation,
+	Observer,
 	Page,
-	ReportInfo,
+	Report,
 	Session,
 	SetTimer,
 	SubmissionId,
@@ -43,9 +45,9 @@ import type {
 	TaskState,
 	Tx,
 } from "../types.ts";
-import type { TaskGraphWatch } from "./task-graph.ts";
+import type { TaskGraph, TaskGraphWatch } from "./task-graph.ts";
 import type { UsageState } from "./usage.ts";
-import type { ConversationView } from "./view.ts";
+import type { ConversationView, ConversationWindow } from "./view.ts";
 
 /** Provider and model ID resolved through pi-ai `Models`. */
 export type ModelRef = {
@@ -576,15 +578,18 @@ export type HarnessSettings = {
 	 */
 	readonly documentRetentionMs?: number;
 	/**
-	 * What a run that fails (`model_error`, `no_model`) does with the inputs queued behind it: `keep` leaves them
+	 * What a run that fails (`model_error`, `no_model`, `interrupted`, `restart_limit`) does with the inputs queued behind it: `keep` leaves them
 	 * queued until the next input or queued write, `continue` starts the next run with them, as an answer would, and
 	 * `withdraw` settles them `unanswered` with reason `run_failed`. Default `keep`.
 	 */
 	readonly afterFailedRun?: AfterFailedRun;
 	/**
 	 * How many times in a row a task may be cut off by a crash, eviction, or reset (a close does not count) without
-	 * changing its state before it is parked as blocked (`restart_limit`) instead of run again; `Harness.retryTask()`
-	 * runs it again. Default 5; `Infinity` never parks.
+	 * changing its state before it ends instead of running again: a tool call with an error result, a compaction failed
+	 * into `pi.live.compactionFailure`, a run with `pi.live.runFailure` reason `restart_limit`, any other task `faulted`
+	 * with detail `{ reason: "restart_limit" }`. A generation's request or poll the host died during is a failed attempt
+	 * under `retry` first; the limit bounds it only when charging that attempt keeps being cut off. Default 5;
+	 * `Infinity` never ends a task for it.
 	 */
 	readonly restartLimit?: number;
 };
@@ -661,18 +666,19 @@ export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	 * Wakes the process for sleeping tasks instead of a `setTimer` timer. Without it, while scheduling runs, a timer that
 	 * keeps the process alive resumes sleeping tasks when they are due. With it, the Harness arms no timer for them: it
 	 * calls `onWake` after open and whenever `Harness.wake()` changes, and the host arms its own wakeup, such as a
-	 * Durable Object alarm, and calls `resume()` when it fires. Called off the Session line, after the commit that
-	 * changed the value, so a host arms a recovery wakeup before calls that can start work. It may call `wake()` and
-	 * `resume()`, and must not block. A throw is reported, and the value is offered again at the next change.
+	 * Durable Object alarm, and calls `resume()` when it fires. Called in a microtask the Session line never waits for,
+	 * after the commit that changed the value was adopted, so a host arms a recovery wakeup before calls that can start
+	 * work. It may call `wake()` and `resume()`, and must not block. A throw is reported, and the value is offered again
+	 * at the next change.
 	 */
 	readonly onWake?: (wake: Wake) => void;
 	/**
 	 * Receives failures that do not fail the calling operation, such as a throwing hook or listener, a task that faulted,
-	 * and the error that fails the Session, once. `info` says what happened: a host can tell a failed Session
-	 * (`session_failed`, often a platform reset) from a faulted task (`task_faulted`) or a parked one (`task_parked`).
-	 * Its own throw or rejection is dropped.
+	 * and the error that fails the Session, once: one `Report`, the `error` and what happened (`kind` and the fields of
+	 * its `ReportInfo`). A host can tell a failed Session (`storage_failed`, often a platform reset) from a faulted task
+	 * (`task_faulted`). Its own throw or rejection is dropped.
 	 */
-	readonly onReport?: (error: unknown, info: ReportInfo) => void;
+	readonly onReport?: (report: Report) => void;
 	/**
 	 * Open for reading only, as a viewer of a session that another process drives, for example a synced copy on a device
 	 * that only shows it. Open recovers nothing: a `running` task stays as committed. Every commit with writes rejects
@@ -698,7 +704,7 @@ export type TaskInspection = {
 	readonly state: /** An invocation is active. */
 		| { readonly kind: "running" }
 		/** The next scheduling pass reserves it; `migrates` when its definition is newer and has `migrate`. */
-		| { readonly kind: "ready"; readonly migrates: boolean }
+		| { readonly kind: "pending"; readonly migrates: boolean }
 		/**
 		 * Waits for these live tasks: the live part of its `on`, or, when abort-marked, its live ordinary owned work, which
 		 * must end before its abort handler starts.
@@ -708,13 +714,10 @@ export type TaskInspection = {
 		| { readonly kind: "sleeping"; readonly until: number }
 		/** Outcome held until its ordinary owned work drains. */
 		| { readonly kind: "completing" }
-		/**
-		 * Cannot run here: no registered definition can take it (aborting it settles it as `orphaned`), or it is parked by
-		 * the restart limit (`retryTask()` runs it again).
-		 */
+		/** Cannot run here: no registered definition can take it (aborting it settles it as `orphaned`). */
 		| {
 				readonly kind: "blocked";
-				readonly reason: "missing_task" | "task_too_old" | "migration_failed" | "restart_limit";
+				readonly reason: "missing_task" | "task_too_old" | "migration_failed";
 				readonly error?: unknown;
 		  };
 };
@@ -791,8 +794,12 @@ export interface Conversation {
 	 * owned, transitively, by its non-background tasks.
 	 */
 	waitForIdle(context: Context): Promise<void>;
-	/** The structural view (spec §9.3) as a serialized watch; commits made while its listener runs arrive folded. */
-	watch(context: Context): Promise<ConversationWatch>;
+	/**
+	 * The structural view (spec §9.3) as a serialized watch; commits made while its listener runs arrive folded. Its
+	 * `entries` are a window over the transcript, as `window` says: the newest 50 by default, then appends, dropping the
+	 * oldest past 100. Built on the same mount as `Harness.observeConversation()`.
+	 */
+	watch(context: Context, window?: ConversationWindow): Promise<ConversationWatch>;
 }
 
 export type ConversationWatch = WatchHandle<ConversationView>;
@@ -838,11 +845,6 @@ export interface Harness extends Session {
 	 * definition cannot take it settles as `orphaned` instead.
 	 */
 	abortTask(id: TaskId, context: Context): Promise<"marked" | "terminal">;
-	/**
-	 * Run a task parked by `settings.restartLimit` again: clears its restart count and enables scheduling. Does nothing
-	 * for a task that is not parked; rejects for an unknown one.
-	 */
-	retryTask(id: TaskId, context: Context): Promise<void>;
 	/** Resolve with the terminal receipt; cancelling `context` cancels only this wait. */
 	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>>;
 	/** Resolve when the ordinary ownership scope of every ownerless conversation has no live non-background task. */
@@ -850,10 +852,28 @@ export interface Harness extends Session {
 	/** Session total: every conversation's `pi.usage` summed. */
 	usage(context: Context): Promise<UsageState>;
 	/**
-	 * Every live task with its owner edge, status, and owned conversations (spec §9.5), as a serialized watch; commits
+	 * Every live task with its owner edge, status, and owned conversations (spec §9.4), as a serialized watch; commits
 	 * made while its listener runs arrive folded.
 	 */
 	watchTaskGraph(context: Context): Promise<TaskGraphWatch>;
+	/**
+	 * Attach a synchronous `Observer` to a conversation's structural view (spec §9.3), atomically on the Session line,
+	 * for adapters: `advance` gets each next revision with its operations as memory adopts the commit, inside Storage's
+	 * `adopt` for a stored one and before it is stored for a deferred one, so it only records it. `window` as for
+	 * `Conversation.watch()`; each observer has its own. `context` governs only the attachment.
+	 */
+	observeConversation(
+		id: ConversationId,
+		observer: Observer<ConversationView>,
+		context: Context,
+		window?: ConversationWindow,
+	): Promise<Observation<ConversationView>>;
+	/**
+	 * Attach a synchronous `Observer` to the task graph (spec §9.4), as `observeConversation()` does to a view. A
+	 * `blocked` reason that changes without a commit (a registry change, a failed migration) advances it on the Session
+	 * line outside any commit and `adopt`, with the background context.
+	 */
+	observeTaskGraph(observer: Observer<TaskGraph>, context: Context): Promise<Observation<TaskGraph>>;
 }
 
 /** What a hook may use: committed reads and the asking task's memos, which hooks and the task share. */
