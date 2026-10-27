@@ -76,6 +76,13 @@ export class UserMessageComponent extends Container {
 			return lines;
 		}
 
+		if (lines.length === 1) {
+			// The message renders flush (no padding row), so the opening and closing
+			// markers land on the same line: keep them in zone order before the text.
+			lines[0] = OSC133_ZONE_START + OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[0];
+			return lines;
+		}
+
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
 		return lines;

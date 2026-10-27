@@ -9,19 +9,32 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 const BG_RESET = "\x1b[49m";
 
 describe("UserMessageComponent", () => {
-	test("keeps user message height stable while moving closing OSC markers off line end", () => {
+	// The fork renders user messages flush (no padding row, see 1de5a113c), so a
+	// single-line message carries all three zone markers on one line, in order and
+	// never at line end. Multi-line messages keep the split placement.
+	test("renders a flush single-line user message with zone markers in order", () => {
 		initTheme("dark");
 
 		const component = new UserMessageComponent("hello");
 		const lines = component.render(20);
 
-		expect(lines).toHaveLength(3);
-		expect(lines[0]).toContain(OSC133_ZONE_START);
+		expect(lines).toHaveLength(1);
+		expect(lines[0].startsWith(OSC133_ZONE_START + OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
+		expect(lines[0]).toContain("hello");
 		expect(lines[0].endsWith(BG_RESET)).toBe(true);
+	});
+
+	test("places zone markers on separate lines for multi-line user messages", () => {
+		initTheme("dark");
+
+		const lines = new UserMessageComponent("first\nsecond").render(20);
+
+		expect(lines.length).toBeGreaterThan(1);
+		expect(lines[0]).toContain(OSC133_ZONE_START);
 		expect(lines[0]).not.toContain(OSC133_ZONE_END);
-		expect(lines[1]).toContain("hello");
-		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
-		expect(lines[2].endsWith(BG_RESET)).toBe(true);
+		const last = lines[lines.length - 1] ?? "";
+		expect(last.startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
+		expect(last.endsWith(BG_RESET)).toBe(true);
 	});
 
 	test("chains Markdown transformers with user message context", () => {
