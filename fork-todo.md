@@ -28,6 +28,16 @@ Tracked open items for the pi fork and its machines. See
       on the Mac conflicts with it). Done 2026-10.
 - [ ] Trace the `~/.pi` live-sync between machines (direction and scope) so
       config drift is predictable.
-- [ ] Verify the next batched release includes the thinking-toggle status-line
-      removal (committed 2026-10 as `9e599fafc`, shipped with the next fork
-      release).
+- [x] Verify the next batched release includes the thinking-toggle status-line
+      removal (committed 2026-10 as `9e599fafc`). Shipped in 1.4.0-2.
+- [ ] Adapt the upstream tests that assume upstream's own update source and
+      spacing, which fail on the fork (`./test.sh`, 13 tests, pre-existing - not
+      sync damage: the test files and the fork-only sources they exercise are
+      unchanged across the syncs):
+      - `packages/coding-agent/test/package-command-paths.test.ts` (12) - self-update
+        tests mock the pi.dev `/api/latest-version` shape and patch+1 version math;
+        the fork reads the GitHub releases API and installs a tarball.
+      - `packages/coding-agent/test/user-message.test.ts` (1) - expects the blank
+        lines around content blocks that `1de5a113c` removed.
+      Note `packages/env` also needs `npm run build:daemon` (Rust) before its 6
+      SSH/conformance suites can run locally.
