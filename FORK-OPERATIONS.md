@@ -135,7 +135,7 @@ Current machines and their single canonical pi:
 
 | Machine | Node | pi location | Notes |
 |---|---|---|---|
-| Mac (here) | mise node 24 | npm global (mise bin) | source checkout + this doc |
+| Mac (here) | mise node 24 | npm global (mise bin) | source checkout + this doc; cargo via rustup (`~/.cargo`, symlinked into `~/.local/bin`) |
 | pook.lan | nvm node 25 | `~/.nvm/versions/node/v25.9.0/bin/pi` | nvm on PATH only in interactive shells |
 | epyc.lan | system node 22 | `~/.npm-global/bin/pi` | user `.npmrc` prefix is `~/.npm-global` |
 

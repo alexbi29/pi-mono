@@ -40,5 +40,10 @@ Tracked open items for the pi fork and its machines. See
       carried a malformed shell-integration zone; order is now `A, B, C`.
       Remaining `./test.sh` failures are only the 6 `packages/env` suites, which
       need `npm run build:daemon` (Rust, as CI does).
-- [ ] Install cargo on the Mac so `packages/env`'s daemon suites run (they are the
-      only reason to reach for `PI_SKIP_TESTS=1` when releasing).
+- [x] Install cargo on the Mac so `packages/env`'s daemon suites run. Done 2026-11:
+      rustup (minimal profile, 1.99.1) in `~/.cargo`, with `cargo`/`rustc`/`rustup`
+      symlinked into `~/.local/bin` so non-interactive script shells - which do not
+      source `~/.profile` - see them too. `./test.sh` is fully green there now.
+- [ ] Upstream's `footer-data-provider` reftable test polls with a fixed timeout and
+      can fail under heavy load on the Mac (passes in isolation). Ignore it only
+      after re-running on an idle machine.
