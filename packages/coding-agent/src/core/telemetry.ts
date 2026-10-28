@@ -1,13 +1,10 @@
 import type { SettingsManager } from "./settings-manager.ts";
 
-function isTruthyEnvFlag(value: string | undefined): boolean {
-	if (!value) return false;
-	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
-}
-
+// Fork: install telemetry is disabled. The signature is kept so upstream
+// merges apply cleanly; pi never reports installs or sends attribution.
 export function isInstallTelemetryEnabled(
-	settingsManager: SettingsManager,
-	telemetryEnv: string | undefined = process.env.PI_TELEMETRY,
+	_settingsManager: SettingsManager,
+	_telemetryEnv: string | undefined = process.env.PI_TELEMETRY,
 ): boolean {
-	return telemetryEnv !== undefined ? isTruthyEnvFlag(telemetryEnv) : settingsManager.getEnableInstallTelemetry();
+	return false;
 }
