@@ -15,6 +15,29 @@ is the entry point.
 - Compact tool call blocks (no blank lines around them).
 - Authoritative fork release detection: `pi update` reads the fork's GitHub releases API
   instead of pi.dev, and installs the release tarball (see below).
+- No telemetry: `@earendil-works/pi-telemetry` is not a dependency of `pi-ai` and is not
+  distributed. `packages/ai/src/telemetry-contract.ts` is a vendored, inert copy of the
+  telemetry contract subset pi-ai uses (types + no-op adapter; no network, storage, or
+  persistence). Install telemetry is disabled too: `isInstallTelemetryEnabled` always
+  returns false and `reportInstallTelemetry` is a no-op, so pi never pings
+  `pi.dev/api/report-install` and never sends attribution headers. When upstream merges
+  touch `packages/ai/src/telemetry.ts`, `packages/ai/src/types.ts`, or
+  `packages/coding-agent/src/core/telemetry.ts`, keep the imports/calls pointed at the
+  vendored/no-op versions and never add `@earendil-works/pi-telemetry` back to
+  `packages/ai/package.json`.
+
+## Runner dependencies
+
+The subagent runner spawned by the `pi-subagents` extension loads the host pi packages
+unbundled (`pi-ai`, `pi-tui`, `pi-agent-core`, `typebox`) instead of the self-contained
+CLI bundle. Their transitive registry dependencies are not installed for bundled
+packages, so anything those unbundled import graphs need at the top level must ship inside
+the tarball. Current set (keep in sync with `bundledDependencies` in
+`packages/coding-agent/package.json` and the staging step in `fork-update.sh`):
+
+- `marked`, `marked-cjk-friendly` (pi-tui's markdown component)
+
+`pi-ai` needs none: its telemetry import is vendored and its provider SDKs load lazily.
 
 Fork-only source files (keep patch surface small):
 
@@ -22,6 +45,7 @@ Fork-only source files (keep patch surface small):
 - `packages/coding-agent/src/package-manager-cli.ts` - self-update installSpec (tarball URL)
 - `packages/coding-agent/test/version-check.test.ts` - tests for the above
 - `packages/coding-agent/package.json` - `bundledDependencies` (fork metadata, see below)
+- `packages/ai/src/telemetry-contract.ts` - vendored inert telemetry contract (see above)
 
 ## Distribution
 
