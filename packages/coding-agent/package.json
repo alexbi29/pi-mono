@@ -100,8 +100,6 @@
 		"@earendil-works/pi-ai",
 		"@earendil-works/pi-codemode",
 		"@earendil-works/pi-mcp",
-		"@earendil-works/pi-tui",
-		"marked",
-		"marked-cjk-friendly"
+		"@earendil-works/pi-tui"
 	]
 }

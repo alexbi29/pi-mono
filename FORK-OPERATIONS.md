@@ -30,14 +30,17 @@ is the entry point.
 
 The subagent runner spawned by the `pi-subagents` extension loads the host pi packages
 unbundled (`pi-ai`, `pi-tui`, `pi-agent-core`, `typebox`) instead of the self-contained
-CLI bundle. Their transitive registry dependencies are not installed for bundled
-packages, so anything those unbundled import graphs need at the top level must ship inside
-the tarball. Current set (keep in sync with `bundledDependencies` in
-`packages/coding-agent/package.json` and the staging step in `fork-update.sh`):
-
-- `marked`, `marked-cjk-friendly` (pi-tui's markdown component)
-
-`pi-ai` needs none: its telemetry import is vendored and its provider SDKs load lazily.
+CLI bundle. npm does not install transitive dependencies of bundled packages, so
+anything those unbundled import graphs need at runtime must ship inside the tarball:
+provider SDKs load through dynamic `.lazy.js` imports, but the first model call
+resolves them, so the full production dependency closure of the five bundled
+workspaces is staged instead of a hand-picked list.
+`scripts/fork-pack-closure.mjs` computes it (Node-style resolution, ~90 packages,
+~100 MB unpacked) and rewrites the staged `bundledDependencies`;
+`packages/coding-agent/package.json` keeps the upstream list (the five workspaces
+only). New dependencies of the bundled workspaces need no extra steps; the closure
+script fails loudly if a member cannot be resolved or if
+`@earendil-works/pi-telemetry` reappears as a dependency.
 
 Fork-only source files (keep patch surface small):
 
@@ -46,6 +49,7 @@ Fork-only source files (keep patch surface small):
 - `packages/coding-agent/test/version-check.test.ts` - tests for the above
 - `packages/coding-agent/package.json` - `bundledDependencies` (fork metadata, see below)
 - `packages/ai/src/telemetry-contract.ts` - vendored inert telemetry contract (see above)
+- `scripts/fork-pack-closure.mjs` - runner dependency closure staging (see below)
 
 ## Distribution
 
