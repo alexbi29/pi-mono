@@ -22,6 +22,13 @@ Tracked open items for the pi fork and its machines. See
       (`--theirs` on version files) and re-bump to `<new-base>-1` live. The merge
       half was exercised by the manual sync of 11 pre-release commits on 2026-11
       (clean, no auto-resolution needed).
+- [x] Fork telemetry policy (2026-11): no telemetry anywhere in shipped code.
+      `packages/ai` vendors an inert telemetry contract
+      (`packages/ai/src/telemetry-contract.ts`, no `pi-telemetry` dependency),
+      and install telemetry is disabled (`isInstallTelemetryEnabled` always
+      false, `reportInstallTelemetry` a no-op). Adapted
+      `sdk-client-identity.test.ts` accordingly: the CLI-agent identity test now
+      expects no attribution headers even with the telemetry setting enabled.
 - [x] Deploy the monitor extension: `~/.pi/agent/extensions/monitor.ts` on
       pook.lan and epyc.lan (verified via headless probe); the Mac uses the
       project copy `.pi/extensions/monitor.ts` (repo cwd; an agent-level copy
