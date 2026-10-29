@@ -4,7 +4,7 @@
 
 ### Added
 
-- New `showTurnUsage` setting: a dim per-turn usage line (TPS, out/in/cache/total, duration) is appended to the transcript after each completed agent run.
+- New `showTurnUsage` setting: an elapsed turn timer in front of the "Working" indicator while the agent runs, and a dim per-turn line (`Took 1m 16s • 6:45 PM • 42.1 tok/s • out/in/cache/total`) appended to the transcript after each completed agent run.
 - The footer shows the live streaming output rate (`~82 tok/s`) while the assistant is generating.
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
 

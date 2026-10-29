@@ -1,10 +1,14 @@
 import { type Component, Loader, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
+import { formatDuration } from "../../../utils/format.ts";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
 export type StatusIndicatorKind = "working" | "retry" | "compaction" | "branchSummary";
+
+/** Redraw cadence of the working indicator's elapsed timer. */
+const ELAPSED_TICK_MS = 1000;
 
 export class StatusIndicator extends Loader {
 	readonly kind: StatusIndicatorKind;
@@ -36,7 +40,19 @@ export class StatusIndicator extends Loader {
 }
 
 export class WorkingStatusIndicator extends StatusIndicator {
-	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions, colorFn?: (text: string) => string) {
+	private baseMessage: string;
+	private startedAtMs: number | undefined;
+	private elapsedText = "";
+	private elapsedInterval: ReturnType<typeof setInterval> | undefined;
+
+	constructor(
+		ui: TUI,
+		message: string,
+		indicator?: WorkingIndicatorOptions,
+		colorFn?: (text: string) => string,
+		/** Turn start for the ticking elapsed prefix, shown while the agent runs. Omit to hide it. */
+		startedAtMs?: number,
+	) {
 		super(
 			"working",
 			ui,
@@ -45,6 +61,39 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			message,
 			indicator,
 		);
+		this.baseMessage = message;
+		this.startedAtMs = startedAtMs;
+		if (startedAtMs !== undefined) {
+			this.tickElapsed();
+			this.elapsedInterval = setInterval(() => this.tickElapsed(), ELAPSED_TICK_MS);
+		}
+	}
+
+	/** Keep the caller's message intact and re-apply the elapsed prefix on top of it. */
+	override setMessage(message: string): void {
+		this.baseMessage = message;
+		this.applyElapsed();
+	}
+
+	private tickElapsed(): void {
+		if (this.startedAtMs === undefined) return;
+		const elapsed = formatDuration(Date.now() - this.startedAtMs);
+		if (elapsed === this.elapsedText) return;
+		this.elapsedText = elapsed;
+		this.applyElapsed();
+	}
+
+	private applyElapsed(): void {
+		// The prefix goes before the message: the embedded border form truncates from the right.
+		super.setMessage(this.elapsedText ? `${this.elapsedText} ${this.baseMessage}` : this.baseMessage);
+	}
+
+	override dispose(): void {
+		if (this.elapsedInterval) {
+			clearInterval(this.elapsedInterval);
+			this.elapsedInterval = undefined;
+		}
+		super.dispose();
 	}
 }
 

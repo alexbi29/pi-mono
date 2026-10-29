@@ -95,6 +95,34 @@ describe("status indicators", () => {
 		}
 	});
 
+	it("ticks the turn elapsed time before the working message", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const tui = { requestRender: vi.fn(), terminal: { rows: 10 } } as unknown as TUI;
+		const indicator = new WorkingStatusIndicator(tui, "Working", undefined, undefined, 0);
+		const line = () => stripAnsi(indicator.render(60)[1]!).trim();
+
+		expect(line()).toContain("0.0s Working");
+		vi.advanceTimersByTime(76_000);
+		expect(line()).toContain("1m 16s Working");
+
+		// An extension's own message keeps the timer in front of it.
+		indicator.setMessage("Compiling");
+		expect(line()).toContain("1m 16s Compiling");
+
+		// The embedded border form truncates from the right, so the timer survives a narrow width.
+		const editor = new CustomEditor(tui, getEditorTheme(), KeybindingsManager.create(), {
+			embedWorkingStatus: true,
+		});
+		editor.setWorkingStatusIndicator(indicator);
+		expect(stripAnsi(editor.render(14)[0]!)).toContain("1m 16s");
+
+		indicator.dispose();
+		vi.advanceTimersByTime(60_000);
+		expect(line()).toContain("1m 16s Compiling");
+	});
+
 	it("disposes retry countdown updates", () => {
 		initTheme("dark");
 		vi.useFakeTimers();

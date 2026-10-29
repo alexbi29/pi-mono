@@ -2344,6 +2344,7 @@ export class InteractiveMode {
 				this.workingMessage ?? this.defaultWorkingMessage,
 				this.workingIndicatorOptions,
 				colorFn,
+				this.settingsManager.getShowTurnUsage() ? this.turnStartedAtMs : undefined,
 			),
 		);
 	}

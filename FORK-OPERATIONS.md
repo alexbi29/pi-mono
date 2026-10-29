@@ -10,7 +10,9 @@ is the entry point.
 - Thinking-phase stats: the hidden "Thinking..." label ticks elapsed time, then shows
   `TPS 192.1 tok/s. out 160, 0.8s` (estimated or exact reasoning tokens, minimum sampling guard)
   with finished runs coalesced into one label.
-- Per-turn usage lines in the transcript (`showTurnUsage` setting).
+- Per-turn timing, gated by the `showTurnUsage` setting: an elapsed timer in front of the "Working"
+  indicator while the agent runs, and a dim transcript line after each run
+  (`Took 1m 16s • 6:45 PM • 5.7 tok/s • out/in/cache/total`).
 - Live output rate in the footer while streaming.
 - Compact tool call blocks (no blank lines around them).
 - Authoritative fork release detection: `pi update` reads the fork's GitHub releases API

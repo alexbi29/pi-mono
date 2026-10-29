@@ -562,7 +562,8 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "turn-usage",
 				label: "Turn usage lines",
-				description: "Show a dim per-turn usage line (tokens, TPS, duration) in the transcript",
+				description:
+					"Show turn timing: an elapsed timer on the working indicator, and a dim per-turn line (duration, finish time, tok/s, tokens) in the transcript",
 				currentValue: config.showTurnUsage ? "true" : "false",
 				values: ["true", "false"],
 			},

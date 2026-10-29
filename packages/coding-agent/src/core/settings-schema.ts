@@ -251,7 +251,8 @@ export const SettingsSchema = Type.Object(
 		),
 		showTurnUsage: Type.Optional(
 			Type.Boolean({
-				description: "Show a dim per-turn usage line (tokens, TPS, and duration) in the transcript.",
+				description:
+					"Show turn timing: an elapsed timer on the working indicator, and a dim per-turn usage line (duration, finish time, tok/s, tokens) in the transcript.",
 				default: SETTINGS_DEFAULTS.showTurnUsage,
 			}),
 		),

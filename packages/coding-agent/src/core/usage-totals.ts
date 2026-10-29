@@ -1,4 +1,5 @@
 import type { Usage } from "@earendil-works/pi-ai/compat";
+import { formatClockTime, formatDuration } from "../utils/format.ts";
 import type { SessionEntry, UsageEntry } from "./session-manager.ts";
 
 export interface UsageTotals {
@@ -99,24 +100,23 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 }
 
 /**
- * One-line transcript text for a persisted per-turn usage entry, mirroring the
- * layout of the classic extension line: TPS first, then out/in/cache/total,
- * with duration last. TPS and duration are omitted when no elapsed time was
- * recorded (e.g. entries loaded from older session files).
+ * One-line transcript text for a persisted per-turn usage entry: how long the run took, when it
+ * finished, and the token counts. TPS and duration are omitted when no elapsed time was recorded
+ * (e.g. entries loaded from older session files). `now` fixes the clock for the finish time.
  */
-export function formatTurnUsage(entry: UsageEntry): string {
+export function formatTurnUsage(entry: UsageEntry, now: Date = new Date()): string {
 	const { input, output, cacheRead, cacheWrite, totalTokens } = entry.usage;
 	const total = totalTokens || input + output + cacheRead + cacheWrite;
-	const body = [
-		`out ${output.toLocaleString()}`,
-		`in ${input.toLocaleString()}`,
-		`cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}`,
-		`total ${total.toLocaleString()}`,
-	].join(", ");
 	const elapsedMs = entry.elapsedMs;
-	if (output > 0 && elapsedMs !== undefined && elapsedMs > 0) {
-		const seconds = elapsedMs / 1000;
-		return `TPS ${(output / seconds).toFixed(1)} tok/s. ${body}, ${seconds.toFixed(1)}s`;
-	}
-	return body;
+	const durationMs = output > 0 && elapsedMs !== undefined && elapsedMs > 0 ? elapsedMs : undefined;
+
+	const parts: string[] = [];
+	if (durationMs !== undefined) parts.push(`Took ${formatDuration(durationMs)}`);
+	const clock = formatClockTime(entry.timestamp, now);
+	if (clock) parts.push(clock);
+	if (durationMs !== undefined) parts.push(`${(output / (durationMs / 1000)).toFixed(1)} tok/s`);
+	parts.push(
+		`out ${output.toLocaleString()}, in ${input.toLocaleString()}, cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}, total ${total.toLocaleString()}`,
+	);
+	return parts.join(" • ");
 }
