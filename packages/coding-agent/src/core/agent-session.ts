@@ -809,7 +809,8 @@ export class AgentSession {
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
 		const projection = this.sessionManager.buildSessionProjection();
-		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
+		// A virtual selection is compaction-checked in prepareRequest, against the model the request
+		// routes to; it gets no warning because no step knows the window ahead of time.
 		const model = this.model;
 		if (model && !isVirtualModel(model) && this._exceedsCompactionThreshold(model, projection)) {
 			await this._runAutoCompaction("threshold", false);
@@ -2048,7 +2049,7 @@ export class AgentSession {
 			await this._checkCompaction(lastAssistant, false);
 		}
 		// Nothing compacted this turn, so tell the model how full the context is before it acts again. A
-		// virtual selection defers to prepareRequest, which knows the model the request routes to.
+		// virtual selection is skipped with the rest of its between-turn handling.
 		if (this.model && !isVirtualModel(this.model)) this._appendContextWarning(this.model);
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;

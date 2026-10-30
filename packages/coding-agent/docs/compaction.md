@@ -49,7 +49,7 @@ The model cannot measure its own context. Usage arrives in provider responses, w
 When auto-compaction can act (`compaction.enabled`, default), pi appends a line to the session before the next assistant request:
 
 ```text
-[context] 91% of 262,144 tokens used. pi compacts automatically at 94%. Keep working, but don't start large edits.
+[context] 238,412 of 262,144 tokens used (91%). pi compacts automatically at 94%. Keep working, but don't start large edits.
 ```
 
 The rules:
@@ -61,6 +61,7 @@ The rules:
 - After compaction, the summary wrapper states the size of the context pi produced: `Context after compaction: ~35,066 of 262,144 tokens (13%).` Entries written before pi persisted that estimate state nothing rather than guess.
 - `[context]` lines are removed from summarizer input, and every summarization prompt forbids carrying context figures into a summary.
 - When auto-compaction is off, pi emits no warning, because a number the model cannot act on only makes it stop early. The system prompt then says pi does not report context usage.
+- A routed (virtual) model selection gets no warning: the context window is only known once the request is routed, and the warning would have to be written before that choice exists.
 
 The system prompt carries the matching rule in a `context_usage` section: usage is measured only by pi, the model must never estimate it, and the newest `[context]` line is the only evidence of context pressure.
 
