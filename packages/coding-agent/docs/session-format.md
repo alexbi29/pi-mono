@@ -188,7 +188,7 @@ Fields:
 - `display`: `true` = show in TUI with distinct styling, `false` = hidden
 - `details`: Optional extension-specific metadata (not sent to LLM)
 
-Pi writes one of these itself: `customType: "context-warning"` carries a `[context]` line that reports context usage to the model, with `details` `{ band, percent, tokens, contextWindow }`. A later compaction drops the entry from LLM context while keeping it here; see [Compaction](compaction.md#context-usage-warning).
+Pi writes one of these itself: `customType: "pi.context-warning"` carries a `[context]` line that reports context usage to the model, with `details` `{ band, percent, tokens, contextWindow }`. A later compaction drops the entry from LLM context while keeping it here; see [Compaction](compaction.md#context-usage-warning).
 
 ### LabelEntry
 

@@ -523,6 +523,28 @@ describe("prepareCompaction", () => {
 		expect(preparation?.messagesToSummarize).toEqual([]);
 		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
 	});
+
+	it("hands summarizers, including extension ones, no [context] warnings", () => {
+		const user = createMessageEntry(createUserMessage("first turn"));
+		const warning: CustomMessageEntry = {
+			...createCustomMessageEntry(
+				"[context] 238,412 of 262,144 tokens used (91%). Keep working, but don't start large edits.",
+			),
+			customType: CONTEXT_WARNING_CUSTOM_TYPE,
+		};
+		const assistant = createMessageEntry(createAssistantMessage("first answer"));
+		const nextUser = createMessageEntry(createUserMessage("second turn"));
+		const nextAssistant = createMessageEntry(createAssistantMessage("second answer"));
+		const preparation = prepareCompaction([user, warning, assistant, nextUser, nextAssistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		// An extension serializing preparation messages itself must not carry the figure into its summary.
+		const summarized = [...(preparation?.messagesToSummarize ?? []), ...(preparation?.turnPrefixMessages ?? [])];
+		expect(extractText(summarized)).toContain("first answer");
+		expect(serializeConversation(convertToLlm(summarized))).not.toContain("[context]");
+	});
 });
 
 describe("prepareCompaction with previous compaction", () => {

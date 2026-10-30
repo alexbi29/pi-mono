@@ -7,7 +7,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { generateBranchSummary } from "../src/core/compaction/index.ts";
+import { generateBranchSummary, prepareBranchEntries } from "../src/core/compaction/index.ts";
 import { CONTEXT_WARNING_CUSTOM_TYPE } from "../src/core/context-warning.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
@@ -31,6 +31,32 @@ const entries: SessionEntry[] = [
 		parentId: null,
 		timestamp: new Date(1).toISOString(),
 		message: { role: "user", content: "Abandoned request", timestamp: 1 },
+	},
+];
+
+// A warning and a post-compaction note both state sizes of a context this summary replaces.
+const warned: SessionEntry[] = [
+	...entries,
+	{
+		type: "custom_message",
+		id: "branch-warning",
+		parentId: "branch-user",
+		timestamp: new Date(2).toISOString(),
+		customType: CONTEXT_WARNING_CUSTOM_TYPE,
+		content: "[context] 238,412 of 262,144 tokens used (91%). Keep working, but don't start large edits.",
+		display: true,
+		details: { band: 90, percent: 91, tokens: 238_412, contextWindow: 262_144 },
+	},
+	{
+		type: "compaction",
+		id: "branch-compaction",
+		parentId: "branch-warning",
+		timestamp: new Date(3).toISOString(),
+		summary: "Earlier work",
+		firstKeptEntryId: "branch-user",
+		tokensBefore: 200_000,
+		tokensAfter: 35_066,
+		contextWindow: 262_144,
 	},
 ];
 
@@ -188,32 +214,6 @@ describe("branch summarization", () => {
 			return stream;
 		};
 
-		// A warning and a post-compaction note both state sizes of a context this summary replaces.
-		const warned: SessionEntry[] = [
-			...entries,
-			{
-				type: "custom_message",
-				id: "branch-warning",
-				parentId: "branch-user",
-				timestamp: new Date(2).toISOString(),
-				customType: CONTEXT_WARNING_CUSTOM_TYPE,
-				content: "[context] 238,412 of 262,144 tokens used (91%). Keep working, but don't start large edits.",
-				display: true,
-				details: { band: 90, percent: 91, tokens: 238_412, contextWindow: 262_144 },
-			},
-			{
-				type: "compaction",
-				id: "branch-compaction",
-				parentId: "branch-warning",
-				timestamp: new Date(3).toISOString(),
-				summary: "Earlier work",
-				firstKeptEntryId: "branch-user",
-				tokensBefore: 200_000,
-				tokensAfter: 35_066,
-				contextWindow: 262_144,
-			},
-		];
-
 		await generateBranchSummary(warned, { model, signal: new AbortController().signal, streamFn });
 
 		expect(prompts).toHaveLength(1);
@@ -222,5 +222,14 @@ describe("branch summarization", () => {
 		expect(conversation).not.toContain("[context]");
 		expect(conversation).not.toContain("Context after compaction");
 		expect(conversation).toContain("Earlier work");
+	});
+
+	it("hands summarizers, including extension ones, no context figures", () => {
+		const { messages } = prepareBranchEntries(warned);
+
+		expect(messages.some((message) => message.role === "custom")).toBe(false);
+		expect(messages).toContainEqual(
+			expect.objectContaining({ role: "compactionSummary", tokensAfter: undefined, contextWindow: undefined }),
+		);
 	});
 });

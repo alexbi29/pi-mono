@@ -48,6 +48,7 @@ export {
 	prepareBranchEntries,
 	serializeConversation,
 	shouldCompact,
+	withoutStaleContextFigures,
 } from "./core/compaction/index.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
 // Extension system

@@ -7,9 +7,10 @@
  */
 
 import { contextFigureFormat } from "./messages.ts";
+import type { SessionEntry } from "./session-manager.ts";
 
 /** customType of the appended entry. Also the marker named by the `context_usage` prompt rule. */
-export const CONTEXT_WARNING_CUSTOM_TYPE = "context-warning";
+export const CONTEXT_WARNING_CUSTOM_TYPE = "pi.context-warning";
 
 /** Usage percentage at or above which the first warning is due. */
 const WARNING_START_PERCENT = 90;
@@ -29,38 +30,67 @@ export interface ContextWarningDetails {
 	contextWindow: number;
 }
 
+/** The newest `[context]` line the model can still see, as far as the next decision needs it. */
+export type VisibleContextWarning = Pick<ContextWarningDetails, "band" | "contextWindow">;
+
 /**
- * Band at which the first warning is due. Normally 90, but a model that compacts earlier must be warned
- * before it compacts, not after: the band drops to the highest 5-point band at least one step below the
- * compaction point, never below one step.
+ * A `[context]` line that is due. `warning` reports a band the model has not been told about;
+ * `correction` replaces a visible line that now overstates usage, after a model switch or a context edit
+ * shrank the context without a compaction.
+ */
+export type ContextWarning = { kind: "warning"; band: number } | { kind: "correction"; band: number };
+
+/**
+ * Band at which the first warning is due: 90, or the highest 5-point band at least one step below the
+ * compaction point when that is lower, never below one step. A band closer than one step to the point is
+ * skipped by any tool result larger than the gap, so compaction would fire without a warning.
  */
 export function firstContextWarningBand(compactionPointPercent: number | undefined): number {
-	// A compaction point of exactly 90 must still warn: compaction fires above it, so the band has to sit
-	// below, not on top of it.
-	if (compactionPointPercent === undefined || compactionPointPercent > WARNING_START_PERCENT) {
-		return WARNING_START_PERCENT;
-	}
-	const ahead = Math.max(
-		WARNING_STEP_PERCENT,
-		Math.floor((compactionPointPercent - WARNING_STEP_PERCENT) / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT,
-	);
-	return ahead;
+	if (compactionPointPercent === undefined) return WARNING_START_PERCENT;
+	const ahead =
+		Math.floor((compactionPointPercent - WARNING_STEP_PERCENT) / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT;
+	return Math.max(WARNING_STEP_PERCENT, Math.min(WARNING_START_PERCENT, ahead));
 }
 
 /**
- * Band to warn at now, or undefined when nothing new is due. A band is reported once per context:
- * `lastWarnedBand` is the band of the newest warning the model can still see, so warnings are never
- * repeated within a band and never revised in place.
+ * Line due now, or undefined when nothing new is due. A band is reported once per context, and a line is
+ * never revised in place: a visible line that no longer holds is superseded by a newer one.
  */
-export function nextContextWarningBand(
-	percent: number,
-	lastWarnedBand: number | undefined,
+export function nextContextWarning(
+	usage: { percent: number; contextWindow: number },
+	visible: VisibleContextWarning | undefined,
 	compactionPointPercent: number | undefined,
-): number | undefined {
+): ContextWarning | undefined {
+	// One step of slack: estimates and provider usage differ slightly, and a correction for that noise
+	// would only teach the model that the numbers are unreliable.
+	const stale =
+		visible !== undefined &&
+		(visible.contextWindow !== usage.contextWindow || usage.percent < visible.band - WARNING_STEP_PERCENT);
+	const lastBand = stale ? 0 : (visible?.band ?? 0);
+	const band = Math.min(Math.floor(usage.percent / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT, 100);
 	const startBand = firstContextWarningBand(compactionPointPercent);
-	if (percent < startBand) return undefined;
-	const band = Math.min(Math.max(Math.floor(percent / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT, startBand), 100);
-	return band > (lastWarnedBand ?? 0) ? band : undefined;
+	if (usage.percent >= startBand) {
+		const warnedBand = Math.max(band, startBand);
+		return warnedBand > lastBand ? { kind: "warning", band: warnedBand } : undefined;
+	}
+	return stale ? { kind: "correction", band } : undefined;
+}
+
+/**
+ * Newest `[context]` line still in the model's context. A compaction drops the lines before it, so the
+ * walk stops there.
+ */
+export function latestContextWarning(branch: SessionEntry[]): VisibleContextWarning | undefined {
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index];
+		if (entry.type === "compaction") return undefined;
+		if (entry.type !== "custom_message" || entry.customType !== CONTEXT_WARNING_CUSTOM_TYPE) continue;
+		// Session files are parsed without validation, so the stored details are checked, not trusted.
+		const details = entry.details as Partial<ContextWarningDetails> | undefined;
+		if (typeof details?.band !== "number" || typeof details.contextWindow !== "number") return undefined;
+		return { band: details.band, contextWindow: details.contextWindow };
+	}
+	return undefined;
 }
 
 /**
@@ -68,6 +98,7 @@ export function nextContextWarningBand(
  * no figure is available; usage figures are always pi's own measurement, never an estimate.
  */
 export function formatContextWarning(
+	warning: ContextWarning,
 	usage: { tokens: number; contextWindow: number; percent: number },
 	compactionPointPercent: number | undefined,
 ): string {
@@ -79,5 +110,9 @@ export function formatContextWarning(
 		compactionPointPercent === undefined || compactionPointPercent <= 0
 			? ""
 			: ` pi compacts automatically at ${Math.ceil(compactionPointPercent)}%.`;
-	return `${measured}${compactsAt} Keep working, but don't start large edits.`;
+	const advice =
+		warning.kind === "warning"
+			? "Keep working, but don't start large edits."
+			: "Earlier [context] lines no longer apply.";
+	return `${measured}${compactsAt} ${advice}`;
 }

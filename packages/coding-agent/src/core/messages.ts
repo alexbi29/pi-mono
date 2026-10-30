@@ -132,19 +132,20 @@ export const contextFigureFormat = new Intl.NumberFormat("en-US");
 
 /**
  * Line that follows a compaction summary. Compaction invalidates any usage figure the model saw
- * earlier, so pi states the size of the context it produced. Empty for entries written before the
+ * earlier, so pi states the size of the context it produced. The line stays unchanged at the head of
+ * the context while usage grows, so it says it is not current. Empty for entries written before the
  * estimate existed.
  */
 export function compactionContextNote(message: CompactionSummaryMessage): string {
 	const { tokensAfter, contextWindow } = message;
 	if (tokensAfter === undefined) return "";
-	if (contextWindow === undefined || contextWindow <= 0) {
-		return `\n\nContext after compaction: ~${contextFigureFormat.format(tokensAfter)} tokens.`;
-	}
-	const percent = Math.round((tokensAfter / contextWindow) * 100);
-	return `\n\nContext after compaction: ~${contextFigureFormat.format(tokensAfter)} of ${contextFigureFormat.format(
-		contextWindow,
-	)} tokens (${percent}%).`;
+	const size =
+		contextWindow === undefined || contextWindow <= 0
+			? `~${contextFigureFormat.format(tokensAfter)} tokens`
+			: `~${contextFigureFormat.format(tokensAfter)} of ${contextFigureFormat.format(contextWindow)} tokens (${Math.round(
+					(tokensAfter / contextWindow) * 100,
+				)}%)`;
+	return `\n\nContext after compaction: ${size}. That was its size when compaction ran, not current usage.`;
 }
 
 /** Convert CustomMessageEntry to AgentMessage format */

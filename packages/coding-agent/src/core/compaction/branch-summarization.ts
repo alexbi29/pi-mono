@@ -25,6 +25,7 @@ import {
 	resolveSummarizationThinkingLevel,
 } from "./compaction.ts";
 import {
+	CONTEXT_FIGURES_SUMMARY_RULE,
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
@@ -236,7 +237,10 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 	// Second pass: walk from newest to oldest, adding messages until token budget
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
-		const message = getMessageFromEntry(entry);
+		const fromEntry = getMessageFromEntry(entry);
+		// Dropped before budgeting rather than at serialization, so extension summarizers get clean
+		// preparation too.
+		const [message] = fromEntry ? withoutStaleContextFigures([fromEntry]) : [];
 		if (!message) continue;
 
 		// Extract file ops from assistant messages (tool calls)
@@ -301,7 +305,7 @@ Use this EXACT format:
 1. [What should happen next to continue this work]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.
-Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
+${CONTEXT_FIGURES_SUMMARY_RULE}`;
 
 /**
  * Generate a summary of abandoned branch entries.
@@ -341,7 +345,7 @@ export async function generateBranchSummary(
 
 	// Transform to LLM-compatible messages, then serialize to text
 	// Serialization prevents the model from treating it as a conversation to continue
-	const llmMessages = convertToLlm(withoutStaleContextFigures(messages));
+	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build prompt

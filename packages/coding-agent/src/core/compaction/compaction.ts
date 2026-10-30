@@ -37,6 +37,7 @@ import {
 } from "../session-manager.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
+	CONTEXT_FIGURES_SUMMARY_RULE,
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
@@ -101,7 +102,8 @@ function extractFileOperations(
 function getMessagesFromProjectedEntryForCompaction(entry: ProjectedSessionEntry): AgentMessage[] {
 	if (entry.sourceEntry.type === "compaction") return [];
 	// System messages are prompt state, not conversation; the compaction entry carries their replay.
-	return entry.messages.filter((message) => message.role !== "system");
+	// Filtered here rather than at serialization, so extension summarizers get clean preparation too.
+	return withoutStaleContextFigures(entry.messages.filter((message) => message.role !== "system"));
 }
 
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
@@ -541,7 +543,7 @@ Use this EXACT format:
 - [Or "(none)" if not applicable]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.
-Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
+${CONTEXT_FIGURES_SUMMARY_RULE}`;
 
 const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
@@ -550,7 +552,7 @@ const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summar
 - UPDATE "Next Steps" based on what was accomplished
 - PRESERVE exact file paths, function names, and error messages
 - If something is no longer relevant, you may remove it
-- NEVER carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it
+- ${CONTEXT_FIGURES_SUMMARY_RULE}
 
 Use this EXACT format:
 
@@ -989,7 +991,7 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 - [Information from these messages needed to understand the later work]
 
 Only summarize information explicitly present above. Do not infer or recreate later messages.
-Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
+${CONTEXT_FIGURES_SUMMARY_RULE}`;
 
 /**
  * Generate summaries for compaction using prepared data.
@@ -1128,7 +1130,7 @@ async function generateTurnPrefixSummary(
 	customInstructions?: string,
 	summaryMaxTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
-	const llmMessages = convertToLlm(withoutStaleContextFigures(messages));
+	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
 	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	if (customInstructions) {

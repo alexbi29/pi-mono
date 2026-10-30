@@ -68,6 +68,7 @@ import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
+	type CompactionSettings,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
@@ -82,7 +83,8 @@ import {
 	CONTEXT_WARNING_CUSTOM_TYPE,
 	type ContextWarningDetails,
 	formatContextWarning,
-	nextContextWarningBand,
+	latestContextWarning,
+	nextContextWarning,
 } from "./context-warning.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
@@ -800,105 +802,79 @@ export class AgentSession {
 	}
 
 	/** Whether `projection`, the current session projection, exceeds the compaction threshold of `model`. */
-	/**
-	 * The compaction decision for a projection, plus the estimate it was made from. Returning the estimate
-	 * lets the caller warn about the same number instead of walking the context a second time.
-	 */
-	private _compactionThresholdCheck(
-		model: Model<any>,
-		projection: SessionProjection,
-	): {
-		exceeds: boolean;
-		tokens: number;
-	} {
-		if (model.contextWindow <= 0) return { exceeds: false, tokens: 0 };
-		const tokens = estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens;
-		return {
-			exceeds: shouldCompact(tokens, model.contextWindow, this.settingsManager.getCompactionSettings(this.model)),
-			tokens,
-		};
+	private _exceedsCompactionThreshold(model: Model<any>, projection: SessionProjection): boolean {
+		if (model.contextWindow <= 0) return false;
+		return shouldCompact(
+			estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens,
+			model.contextWindow,
+			this.settingsManager.getCompactionSettings(this.model),
+		);
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
-		const projection = this.sessionManager.buildSessionProjection();
 		// A virtual selection is compaction-checked in prepareRequest, against the model the request
 		// routes to; it gets no warning because no step knows the window ahead of time.
 		const model = this.model;
-		if (model && !isVirtualModel(model)) {
-			const { exceeds, tokens } = this._compactionThresholdCheck(model, projection);
-			if (exceeds) {
-				await this._runAutoCompaction("threshold", false);
-				return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
-			}
-			// Below the compaction point, tell the model how full the context is while it can still act.
-			if (this._appendContextWarning(model, this._usageFromEstimate(model, tokens))) {
-				return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
-			}
+		if (!model || isVirtualModel(model)) {
+			return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 		}
-		return { ...context, messages: projection.messages };
-	}
-
-	/** Share the shape {@link getContextUsage} returns, so one measurement serves both the footer and the warning. */
-	private _usageFromEstimate(model: Model<any>, tokens: number): ContextUsage | undefined {
-		const contextWindow = model.contextWindow ?? 0;
-		if (contextWindow <= 0) return undefined;
-		return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
+		return { ...context, messages: await this._compactOrReportContextUsage(model) };
 	}
 
 	/**
-	 * Append the `[context]` warning when usage crossed a band the model has not been told about. Returns
-	 * whether an entry was added, so the caller only re-derives the projection when the request changed. A
-	 * warning is never edited afterwards: a number pi rewrote later would be indistinguishable from a
+	 * Compact when the context passed the compaction point of `model`, otherwise append a `[context]` line
+	 * when one is due. Returns the messages of the resulting context. Both decisions use one estimate, so
+	 * a line never reports usage past the compaction point it prints.
+	 */
+	private async _compactOrReportContextUsage(model: Model<any>): Promise<AgentMessage[]> {
+		const projection = this.sessionManager.buildSessionProjection();
+		const settings = this.settingsManager.getCompactionSettings(model);
+		// Checked before measuring: with compaction off neither decision can act, and measuring walks the
+		// whole context.
+		if (!settings.enabled || model.contextWindow <= 0) return projection.messages;
+
+		const branch = this.sessionManager.getBranch();
+		const tokens = estimateProjectedContextTokens(projection, branch).tokens;
+		if (shouldCompact(tokens, model.contextWindow, settings)) {
+			await this._runAutoCompaction("threshold", false);
+			return this.sessionManager.buildSessionProjection().messages;
+		}
+		// Appending refreshes agent state from the new projection, so it is not rebuilt here.
+		return this._appendContextWarning(model, settings, branch, tokens)
+			? this.agent.state.messages
+			: projection.messages;
+	}
+
+	/**
+	 * Append a `[context]` line when one is due for `tokens` on `branch`. Returns whether an entry was
+	 * added. A line is never edited afterwards: a number pi rewrote later would be indistinguishable from a
 	 * measurement.
 	 */
-	private _appendContextWarning(model: Model<any>, usage: ContextUsage | undefined): boolean {
-		if (!this._reportsContextUsage()) return false;
-		if (!usage || usage.tokens === null || usage.percent === null) return false;
+	private _appendContextWarning(
+		model: Model<any>,
+		settings: CompactionSettings,
+		branch: SessionEntry[],
+		tokens: number,
+	): boolean {
+		const { contextWindow } = model;
+		const usage = { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
+		const compactionPoint = ((contextWindow - settings.reserveTokens) / contextWindow) * 100;
+		const warning = nextContextWarning(usage, latestContextWarning(branch), compactionPoint);
+		if (!warning) return false;
 
-		const { reserveTokens } = this.settingsManager.getCompactionSettings(model);
-		const compactionPoint = ((model.contextWindow - reserveTokens) / model.contextWindow) * 100;
-		const band = nextContextWarningBand(usage.percent, this._latestContextWarningBand(), compactionPoint);
-		if (band === undefined) return false;
-
-		const details: ContextWarningDetails = {
-			band,
-			percent: usage.percent,
-			tokens: usage.tokens,
-			contextWindow: usage.contextWindow,
-		};
+		const details: ContextWarningDetails = { band: warning.band, ...usage };
 		// Persisted through the standard custom-message path, so prepareRequest picks it up for the
 		// request that follows and it stays in the transcript as history.
 		this._appendCustomMessage(
 			createCustomMessage(
 				CONTEXT_WARNING_CUSTOM_TYPE,
-				formatContextWarning(
-					{ tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent },
-					compactionPoint,
-				),
+				formatContextWarning(warning, usage, compactionPoint),
 				true,
 				details,
 				new Date().toISOString(),
 			),
 		);
 		return true;
-	}
-
-	/**
-	 * Band of the newest warning still in the model's context. Warnings before the latest compaction were
-	 * dropped from it, so they must not suppress a new band.
-	 */
-	private _latestContextWarningBand(): number | undefined {
-		const branch = this.sessionManager.getBranch();
-		const compaction = getLatestCompactionEntry(branch);
-		const firstVisibleIndex = compaction ? branch.findIndex((entry) => entry.id === compaction.id) + 1 : 0;
-		for (let index = branch.length - 1; index >= firstVisibleIndex; index--) {
-			const entry = branch[index];
-			if (entry?.type !== "custom_message" || entry.customType !== CONTEXT_WARNING_CUSTOM_TYPE) continue;
-			// Session files are parsed without validation, so the stored band is checked, not trusted.
-			const band = (entry.details as Partial<ContextWarningDetails> | undefined)?.band;
-			return typeof band === "number" ? band : undefined;
-		}
-		return undefined;
 	}
 
 	private _installAgentRequestProjection(): void {
@@ -952,7 +928,7 @@ export class AgentSession {
 			}
 			// The route stands: the router already decided this request. The state entry does not change
 			// the projection.
-			if (this._compactionThresholdCheck(route.model, projection).exceeds) {
+			if (this._exceedsCompactionThreshold(route.model, projection)) {
 				await this._runAutoCompaction("threshold", false);
 				({ previous, context } = await prepare());
 			}
@@ -2068,10 +2044,11 @@ export class AgentSession {
 		if (lastAssistant) {
 			await this._checkCompaction(lastAssistant, false);
 		}
-		// Nothing compacted this turn, so tell the model how full the context is before it acts again. The
-		// measurement is memoized, so this is free unless the session grew. A virtual selection is skipped
-		// with the rest of its between-turn handling.
-		if (this.model && !isVirtualModel(this.model)) this._appendContextWarning(this.model, this.getContextUsage());
+		// The response check above trusts the last provider usage, which misses anything appended since, such
+		// as `!bash` output. Apply the between-turns rule to the whole context too, so the first request of
+		// the run neither crosses the compaction point nor carries a line contradicting it. A virtual
+		// selection is checked in prepareRequest instead.
+		if (this.model && !isVirtualModel(this.model)) await this._compactOrReportContextUsage(this.model);
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 		// Re-read per run: the rule wording follows a setting the user can change mid-session.

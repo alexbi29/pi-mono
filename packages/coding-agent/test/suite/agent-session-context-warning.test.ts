@@ -218,4 +218,75 @@ describe("context warning", () => {
 			harness.cleanup();
 		}
 	});
+
+	it("corrects the visible line after a switch to a larger window", async () => {
+		const measured = await measureSeedTokens();
+		const contextWindow = Math.ceil(measured / 0.904);
+		const harness = await createHarness({
+			models: [
+				{ id: "faux-1", contextWindow, maxTokens: 100 },
+				{ id: "faux-large", contextWindow: contextWindow * 10, maxTokens: 100 },
+			],
+			settings: {
+				compaction: {
+					enabled: true,
+					reserveTokens: Math.ceil(contextWindow / 25),
+					keepRecentTokens: Math.floor(contextWindow / 4),
+				},
+			},
+		});
+
+		try {
+			const requests: TranscriptContext[] = [];
+			const record = (text: string) => (context: TranscriptContext) => {
+				requests.push(context);
+				return fauxAssistantMessage(text);
+			};
+			harness.setResponses([record("noted"), record("second"), record("third")]);
+
+			await harness.session.prompt("x".repeat(SEED_CHARS));
+			await harness.session.prompt("ok");
+			expect(warningEntries(harness)).toHaveLength(1);
+
+			// The same tokens are ~9% of the new window. Without a newer line the model keeps planning
+			// around ~90%, and no band would fire until 90% of the larger window.
+			await harness.session.setModel(harness.getModel("faux-large")!);
+			await harness.session.prompt("ok");
+
+			expect(warningEntries(harness)).toHaveLength(2);
+			const latest = requests.at(-1);
+			if (!latest) throw new Error("no request recorded");
+			const lines = latest.messages.filter((message) => sawWarningMessage(message));
+			expect(JSON.stringify(lines.at(-1))).toContain("Earlier [context] lines no longer apply.");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("compacts before the first request of a run when appended messages crossed the point", async () => {
+		const measured = await measureSeedTokens();
+		// The seed response reports ~70%, well below the 96% compaction point.
+		const contextWindow = Math.ceil(measured / 0.7);
+		const harness = await createWarningHarness(contextWindow, Math.ceil(contextWindow / 25));
+
+		try {
+			harness.setResponses([
+				fauxAssistantMessage("noted"),
+				fauxAssistantMessage("summary"),
+				fauxAssistantMessage("answered"),
+			]);
+			await harness.session.prompt("x".repeat(SEED_CHARS));
+
+			// Output appended without a response, like `!bash`, takes the context past the point. The last
+			// provider usage cannot see it, so only the projected estimate catches it.
+			harness.sessionManager.appendCustomMessageEntry("note", "y".repeat(Math.ceil(contextWindow * 1.4)), true);
+			await harness.session.prompt("ok");
+
+			expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({ reason: "threshold" });
+			// Before the fix, the run sent its first request uncompacted with "(100%). pi compacts automatically at 96%."
+			expect(warningEntries(harness)).toHaveLength(0);
+		} finally {
+			harness.cleanup();
+		}
+	});
 });
