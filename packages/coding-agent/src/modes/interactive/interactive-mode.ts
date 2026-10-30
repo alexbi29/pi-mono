@@ -506,9 +506,7 @@ export class InteractiveMode {
 	private streamingMessage: AssistantMessage | undefined = undefined;
 	private turnStartedAtMs: number | undefined;
 	private thinkingTicker: NodeJS.Timeout | undefined;
-	private streamingRateChars = 0;
-	private streamingRateLastMs = 0;
-	private streamingRateEwma = 0;
+	private streamingRateStartedAt = 0;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -3425,7 +3423,12 @@ export class InteractiveMode {
 					const retainedEntries = entries.slice(1);
 					this.renderSessionEntries(retainedEntries.filter((entry) => !entriesAfterCompaction.has(entry.id)));
 					this.addMessageToChat(
-						createCompactionSummaryMessage(event.entry.summary, event.entry.tokensBefore, event.entry.timestamp),
+						createCompactionSummaryMessage(
+							event.entry.summary,
+							event.entry.tokensBefore,
+							event.entry.timestamp,
+							event.entry.tokensAfter,
+						),
 					);
 					if (event.entry.usage) {
 						this.addCompactionCostNotice({
@@ -3680,6 +3683,7 @@ export class InteractiveMode {
 							event.result.summary,
 							event.result.tokensBefore,
 							new Date().toISOString(),
+							event.result.estimatedTokensAfter,
 						),
 					);
 					if (event.result.usage) {
@@ -4177,9 +4181,7 @@ export class InteractiveMode {
 	}
 
 	private resetStreamingRate(): void {
-		this.streamingRateChars = 0;
-		this.streamingRateLastMs = 0;
-		this.streamingRateEwma = 0;
+		this.streamingRateStartedAt = Date.now();
 	}
 
 	private clearStreamingRate(): void {
@@ -4188,8 +4190,9 @@ export class InteractiveMode {
 	}
 
 	/**
-	 * Estimate the current output rate from streamed text/thinking deltas (tool
-	 * call arguments are excluded) and surface it in the footer while streaming.
+	 * Surface the average output rate since the assistant message started, using
+	 * streamed text/thinking characters (tool call arguments are excluded). A turn
+	 * average is much steadier than an instantaneous or EWMA rate.
 	 */
 	private updateStreamingRate(message: AssistantMessage): void {
 		let chars = 0;
@@ -4197,20 +4200,19 @@ export class InteractiveMode {
 			if (content.type === "text") chars += content.text.length;
 			else if (content.type === "thinking") chars += content.thinking.length;
 		}
-		const now = Date.now();
-		const dtMs = now - this.streamingRateLastMs;
-		if (this.streamingRateLastMs > 0 && dtMs > 0 && chars >= this.streamingRateChars) {
-			const deltaTokens = (chars - this.streamingRateChars) / CHARS_PER_TOKEN;
-			const rate = deltaTokens / (dtMs / 1000);
-			this.streamingRateEwma = this.streamingRateEwma === 0 ? rate : this.streamingRateEwma * 0.7 + rate * 0.3;
+		if (this.streamingRateStartedAt === 0) {
+			// Defensive: a delta before message_start should still anchor the average.
+			this.streamingRateStartedAt = Date.now();
 		}
-		this.streamingRateChars = chars;
-		this.streamingRateLastMs = now;
-		if (this.streamingRateEwma >= 1) {
-			this.footer.setStreamingOutputRate(Math.round(this.streamingRateEwma));
+		const elapsedMs = Date.now() - this.streamingRateStartedAt;
+		if (elapsedMs <= 0) {
+			this.footer.setStreamingOutputRate(undefined);
+			return;
+		}
+		const rate = chars / CHARS_PER_TOKEN / (elapsedMs / 1000);
+		if (rate >= 1) {
+			this.footer.setStreamingOutputRate(Math.round(rate));
 		} else {
-			// Decayed (e.g. during a long tool-argument stream): drop the readout
-			// rather than show a stale rate.
 			this.footer.setStreamingOutputRate(undefined);
 		}
 	}

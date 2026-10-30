@@ -95,6 +95,8 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	summary: string;
 	firstKeptEntryId: string;
 	tokensBefore: number;
+	/** Estimated context tokens after compaction, when known. */
+	tokensAfter?: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -461,7 +463,12 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 		return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
 	}
 	if (entry.type === "compaction") {
-		const summary = createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+		const summary = createCompactionSummaryMessage(
+			entry.summary,
+			entry.tokensBefore,
+			entry.timestamp,
+			entry.tokensAfter,
+		);
 		return entry.systemMessage ? [entry.systemMessage, summary] : [summary];
 	}
 	return [];
@@ -1285,6 +1292,7 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		tokensAfter?: number,
 	): string {
 		const timestamp = new Date().toISOString();
 		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
@@ -1297,6 +1305,7 @@ export class SessionManager {
 			summary,
 			firstKeptEntryId: firstKeptEntryId ?? id,
 			tokensBefore,
+			tokensAfter,
 			details,
 			usage,
 			fromHook,

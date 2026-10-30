@@ -254,6 +254,7 @@ interface CompactionSummaryMessage {
   role: "compactionSummary";
   summary: string;
   tokensBefore: number;
+  tokensAfter?: number; // estimated context tokens after compaction
   timestamp: number;
 }
 ```

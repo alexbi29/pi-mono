@@ -38,7 +38,13 @@ function msg(id: string, parentId: string | null, role: "user" | "assistant", te
 	};
 }
 
-function compaction(id: string, parentId: string | null, summary: string, firstKeptEntryId: string): CompactionEntry {
+function compaction(
+	id: string,
+	parentId: string | null,
+	summary: string,
+	firstKeptEntryId: string,
+	tokensAfter?: number,
+): CompactionEntry {
 	return {
 		type: "compaction",
 		id,
@@ -47,6 +53,7 @@ function compaction(id: string, parentId: string | null, summary: string, firstK
 		summary,
 		firstKeptEntryId,
 		tokensBefore: 1000,
+		tokensAfter,
 	};
 }
 
@@ -191,6 +198,19 @@ describe("buildSessionContext", () => {
 			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "4", "5", "7", "8"]);
 			const ctx = buildSessionContext(entries);
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
+		});
+
+		it("carries the estimated post-compaction token count into the summary message", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response1"),
+				msg("3", "2", "user", "second"),
+				compaction("4", "3", "Summary", "2", 250),
+			];
+
+			const [summary] = buildSessionContext(entries).messages;
+			expect(summary?.role).toBe("compactionSummary");
+			expect(summary?.role === "compactionSummary" ? summary.tokensAfter : undefined).toBe(250);
 		});
 
 		it("keeps settings from the full path after compaction", () => {

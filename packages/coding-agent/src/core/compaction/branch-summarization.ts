@@ -8,6 +8,7 @@
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText, normalizeContext } from "@earendil-works/pi-ai";
+import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
 import {
 	convertToLlm,
@@ -16,7 +17,12 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
+import {
+	completeSummarization,
+	estimateTokens,
+	getSummarizationFailure,
+	SUMMARIZATION_MAX_TOKENS,
+} from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -169,7 +175,7 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
 
 		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp, entry.tokensAfter);
 
 		// These don't contribute to conversation content
 		case "thinking_level_change":
@@ -350,7 +356,14 @@ export async function generateBranchSummary(
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
 	const context = normalizeContext({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages });
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal };
+	const tokenCap = clampMaxTokensToContext(model, context, SUMMARIZATION_MAX_TOKENS);
+	const requestOptions: SimpleStreamOptions = {
+		apiKey,
+		headers,
+		env,
+		signal,
+		maxTokens: SUMMARIZATION_MAX_TOKENS,
+	};
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		requestOptions.reasoning = thinkingLevel;
 	}
@@ -360,7 +373,7 @@ export async function generateBranchSummary(
 	if (response.stopReason === "aborted") {
 		return { aborted: true };
 	}
-	const failure = getSummarizationFailure(response, "Branch summarization");
+	const failure = getSummarizationFailure(response, "Branch summarization", tokenCap);
 	if (failure) {
 		return { error: failure };
 	}

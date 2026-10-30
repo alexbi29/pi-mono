@@ -14,9 +14,13 @@
 - The hidden "Thinking..." label now ticks the elapsed thinking time while streaming, and once the thinking run completes shows TPS with estimated (or exact provider-reported reasoning) tokens and duration; consecutive finished thinking runs coalesce into one stats label. Clicking the label still expands the raw thinking.
 - Tool call blocks no longer add blank lines above and below, so the colored boxes hug their content.
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
+- Compaction summaries now show the estimated token count after compaction and keep the `[compaction]` label on the same line as the summary text.
+- Compaction, turn-prefix, and branch summaries now request a 16,384-token output budget instead of the model's default output limit, and a length-stop failure reports the effective token cap.
+- The footer's live output rate now shows the average since the current assistant response started instead of a noisy instantaneous/EWMA rate.
 
 ### Fixed
 
+- Fixed a `length` stop after compaction being treated as context overflow when the request still fits the context window, which could trigger unnecessary auto-compactions.
 - Fixed `pi install` and `pi remove` adding ever deeper nested entries to the npm `package-lock.json` when the agent directory is reached through a symlink, such as `~/.pi` linked into a dotfiles repo. pi now passes the resolved real path to npm ([#11358](https://github.com/earendil-works/pi/issues/11358))
 - MCP sign-in now rejects authorization endpoints and other OAuth metadata URLs that are not `http:` or `https:`. Before, a malicious MCP server could supply a `file:` or custom protocol URL, which pi passed to the platform URL handler.
 - Automatic `fd` and `rg` downloads no longer fetch x86-64 binaries on ARM32 and other architectures without a prebuilt release. pi now warns and recommends installing the tool with the system package manager ([#11209](https://github.com/earendil-works/pi/issues/11209))

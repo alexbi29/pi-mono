@@ -37,22 +37,27 @@ export class CompactionSummaryMessageComponent extends Box {
 		this.clear();
 		const content = new Container();
 
-		const tokenStr = this.message.tokensBefore.toLocaleString();
+		const tokenStr =
+			this.message.tokensAfter !== undefined
+				? `${this.message.tokensBefore.toLocaleString()} to ${this.message.tokensAfter.toLocaleString()}`
+				: this.message.tokensBefore.toLocaleString();
 		const label = theme.fg("customMessageLabel", `\x1b[1m[compaction]\x1b[22m`);
-		content.addChild(new Text(label, 0, 0));
-		content.addChild(new Spacer(1));
+		const summaryLabel = `Compacted from ${tokenStr} tokens`;
 
 		if (this.expanded) {
-			const header = `**Compacted from ${tokenStr} tokens**\n\n`;
 			content.addChild(
-				new Markdown(header + this.message.summary, 0, 0, this.markdownTheme, {
+				new Text(`${label} ${theme.fg("customMessageText", `\x1b[1m${summaryLabel}\x1b[22m`)}`, 0, 0),
+			);
+			content.addChild(new Spacer(1));
+			content.addChild(
+				new Markdown(this.message.summary, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
 		} else {
 			content.addChild(
 				new Text(
-					theme.fg("customMessageText", `Compacted from ${tokenStr} tokens (`) +
+					`${label} ${theme.fg("customMessageText", `${summaryLabel} (`)}` +
 						theme.fg("dim", keyText("app.tools.expand")) +
 						theme.fg("customMessageText", " to expand)"),
 					0,

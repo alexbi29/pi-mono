@@ -51,6 +51,25 @@ describe("collapsible message components", () => {
 		expect(renderText(component)).not.toContain("compaction details");
 	});
 
+	test("shows the estimated token count after compaction", () => {
+		const component = new CompactionSummaryMessageComponent({
+			role: "compactionSummary",
+			summary: "compaction details",
+			tokensBefore: 185861,
+			tokensAfter: 12345,
+			timestamp: Date.now(),
+		});
+
+		const collapsed = renderText(component);
+		expect(collapsed).toContain("[compaction] Compacted from 185,861 to 12,345 tokens");
+		expect(collapsed).toContain("to expand");
+
+		clickRow(component, "[compaction]");
+		const expanded = renderText(component);
+		expect(expanded).toContain("[compaction] Compacted from 185,861 to 12,345 tokens");
+		expect(expanded).toContain("compaction details");
+	});
+
 	test("toggles a branch summary when clicked", () => {
 		const component = new BranchSummaryMessageComponent({
 			role: "branchSummary",

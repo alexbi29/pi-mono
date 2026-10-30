@@ -15,6 +15,7 @@ import {
 	retryAssistantCall,
 	uuidv7,
 } from "@earendil-works/pi-ai";
+import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import type {
 	AssistantMessage,
 	Model,
@@ -578,16 +579,24 @@ const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation mes
 
 ${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
 
+/** Output budget requested for compaction, turn-prefix, and branch summaries. */
+export const SUMMARIZATION_MAX_TOKENS = 16384;
+
 /**
  * Returns an error message when a summarization response cannot safely be persisted.
  * A length stop contains partial text and must not become a session checkpoint.
  */
-export function getSummarizationFailure(response: AssistantMessage, label: string): string | undefined {
+export function getSummarizationFailure(
+	response: AssistantMessage,
+	label: string,
+	tokenCap?: number,
+): string | undefined {
 	if (response.stopReason === "error") {
 		return `${label} failed: ${response.errorMessage || "Unknown error"}`;
 	}
 	if (response.stopReason === "length") {
-		return `${label} failed: generation hit the token cap and the summary is incomplete`;
+		const cap = tokenCap === undefined ? "" : ` (${tokenCap.toLocaleString()} tokens)`;
+		return `${label} failed: generation hit the token cap${cap} and the summary is incomplete`;
 	}
 	return undefined;
 }
@@ -728,18 +737,23 @@ export async function generateSummaryWithUsage(
 	}
 	promptText += basePrompt;
 
-	const completionOptions = createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId);
+	const summarizationContext = buildSummarizationContext(promptText);
+	const completionOptions = {
+		...createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		maxTokens: SUMMARIZATION_MAX_TOKENS,
+	};
+	const tokenCap = clampMaxTokensToContext(model, summarizationContext, SUMMARIZATION_MAX_TOKENS);
 
 	const response = await completeSummarization(
 		model,
-		buildSummarizationContext(promptText),
+		summarizationContext,
 		completionOptions,
 		streamFn,
 		retry,
 		callbacks,
 	);
 
-	const failure = getSummarizationFailure(response, "Summarization");
+	const failure = getSummarizationFailure(response, "Summarization", tokenCap);
 	if (failure) {
 		throw new Error(failure);
 	}
@@ -1080,16 +1094,22 @@ async function generateTurnPrefixSummary(
 		promptText = `${promptText}\n\nAdditional focus: ${customInstructions}`;
 	}
 
+	const summarizationContext = buildSummarizationContext(promptText);
+	const completionOptions = {
+		...createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		maxTokens: SUMMARIZATION_MAX_TOKENS,
+	};
+	const tokenCap = clampMaxTokensToContext(model, summarizationContext, SUMMARIZATION_MAX_TOKENS);
 	const response = await completeSummarization(
 		model,
-		buildSummarizationContext(promptText),
-		createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
+		summarizationContext,
+		completionOptions,
 		streamFn,
 		retry,
 		callbacks,
 	);
 
-	const failure = getSummarizationFailure(response, "Turn prefix summarization");
+	const failure = getSummarizationFailure(response, "Turn prefix summarization", tokenCap);
 	if (failure) {
 		throw new Error(failure);
 	}

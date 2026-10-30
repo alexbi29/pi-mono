@@ -783,7 +783,9 @@ describe("durable length recovery", () => {
 			label: "Noop",
 			description: "Noop",
 			parameters: Type.Object({}),
-			execute: async () => ({ content: [{ type: "text", text: "done" }], details: {} }),
+			// Large enough that the kept tool result still puts the post-compaction
+			// context over the 1,000-token window, so the second length stop is real pressure.
+			execute: async () => ({ content: [{ type: "text", text: "done".repeat(6_000) }], details: {} }),
 		};
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],

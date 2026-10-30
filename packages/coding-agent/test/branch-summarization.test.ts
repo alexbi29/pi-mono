@@ -7,7 +7,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { generateBranchSummary } from "../src/core/compaction/index.ts";
+import { generateBranchSummary, SUMMARIZATION_MAX_TOKENS } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -128,7 +128,7 @@ describe("branch summarization", () => {
 		});
 
 		expect(result.error).toBe(
-			"Branch summarization failed: generation hit the token cap and the summary is incomplete",
+			`Branch summarization failed: generation hit the token cap (${SUMMARIZATION_MAX_TOKENS.toLocaleString()} tokens) and the summary is incomplete`,
 		);
 	});
 });

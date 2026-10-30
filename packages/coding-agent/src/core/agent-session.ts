@@ -992,6 +992,18 @@ export class AgentSession {
 		return manager;
 	}
 
+	private _estimateTokensAfterCompaction(
+		summary: string,
+		firstKeptEntryId: string | null,
+		details?: unknown,
+		usage?: Usage,
+	): number {
+		const preview = this._createBoundaryPreviewManager([
+			{ type: "compaction", summary, firstKeptEntryId, details, usage },
+		]);
+		return estimateMessagesTokens(preview.buildSessionProjection().messages);
+	}
+
 	private _getPendingBoundaryMessages(): AgentMessage[] {
 		return [...this.agent.peekQueuedMessages(), ...this._pendingCustomMessages];
 	}
@@ -2908,10 +2920,18 @@ export class AgentSession {
 				throw new Error("Compaction cancelled");
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			const estimatedTokensAfter = this._estimateTokensAfterCompaction(summary, firstKeptEntryId, details, usage);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				usage,
+				estimatedTokensAfter,
+			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
-			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -3065,8 +3085,25 @@ export class AgentSession {
 			sameModel &&
 			((explicitOverflow && assistantRetainedForExplicitRecovery) ||
 				(assistantUsageMatchesProjection && isContextOverflow(assistantMessage, contextWindow)));
+		// A length stop below the desired output only implies context pressure when the
+		// request is actually near the window or the full output could not fit. Otherwise
+		// it is a provider/model output cap, and compacting would not free any room.
+		const inputTokens =
+			assistantMessage.usage.input + assistantMessage.usage.cacheRead + assistantMessage.usage.cacheWrite;
+		// Usage can be missing on synthetic or zero-usage responses; fall back to the
+		// projected context so a genuinely large request still counts as pressure.
+		const projectedTokens = estimateContextTokens(currentProjection.messages).tokens;
+		const pressureTokens = Math.max(inputTokens, projectedTokens);
+		const messageMaxTokens = messageModel?.maxTokens ?? 0;
+		const contextPressure =
+			contextWindow > 0 &&
+			(pressureTokens + messageMaxTokens > contextWindow ||
+				pressureTokens >= contextWindow - settings.reserveTokens);
 		const recoverableLength =
-			sameModel && assistantIsProjected && isRecoverableLength(assistantMessage, messageModel.maxTokens);
+			sameModel &&
+			assistantIsProjected &&
+			contextPressure &&
+			isRecoverableLength(assistantMessage, messageMaxTokens);
 		if (contextOverflow || recoverableLength) {
 			const willRetry = assistantMessage.stopReason !== "stop";
 
@@ -3234,10 +3271,18 @@ export class AgentSession {
 			}
 			abortController.signal.throwIfAborted();
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			const estimatedTokensAfter = this._estimateTokensAfterCompaction(summary, firstKeptEntryId, details, usage);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				usage,
+				estimatedTokensAfter,
+			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
-			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as

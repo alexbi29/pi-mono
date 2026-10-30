@@ -175,6 +175,7 @@ describe("AgentSession compaction characterization", () => {
 		const compactionEntry = compactionEntries[0];
 		if (compactionEntry?.type === "compaction") {
 			expect(compactionEntry.usage).toEqual(summaryUsage);
+			expect(compactionEntry.tokensAfter).toBe(estimatedTokensAfter);
 		}
 		const statsAfter = harness.session.getSessionStats();
 		expect(statsAfter.tokens.input).toBe(statsBefore.tokens.input + summaryUsage.input);
@@ -672,9 +673,36 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
+	it("does not treat a post-compaction length stop as overflow when the context has room", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 200_000, maxTokens: 8_192 }],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		const keptUserId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "before compaction" }],
+			timestamp: Date.now() - 2_000,
+		});
+		harness.sessionManager.appendCompaction("summary", keptUserId, 185_000);
+		const lengthStop = createAssistant(harness, {
+			stopReason: "length",
+			totalTokens: 25_000,
+			timestamp: Date.now() + 1_000,
+		});
+		harness.sessionManager.appendMessage(lengthStop);
+
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+
+		await sessionInternals._checkCompaction(lengthStop);
+
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+	});
+
 	it("stops after one compact-and-retry when a second response is also truncated", async () => {
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
+			models: [{ id: "faux-1", contextWindow: 10_000, maxTokens: 9_000 }],
 			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
