@@ -28,7 +28,9 @@ export interface BuildSystemPromptOptions {
 	appendSystemPrompt?: string;
 	/**
 	 * Whether pi reports context usage to the model with `[context]` lines, which is the case while
-	 * auto-compaction can act. Selects the matching `context_usage` rule wording.
+	 * auto-compaction can act. Selects the matching `context_usage` rule wording. pi owns this field and
+	 * overwrites any value an extension handler sets, because the rule promises a signal the session
+	 * either writes or never writes.
 	 */
 	contextUsageReporting?: boolean;
 	/** Additional XML-wrapped prompt sections keyed by tag name. */

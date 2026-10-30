@@ -2,7 +2,7 @@ import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { CONTEXT_WARNING_CUSTOM_TYPE } from "../../src/core/context-warning.ts";
-import { createHarness, type Harness } from "./harness.ts";
+import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
 
 /** Seed prompt used to push a small faux window into the first warning band. */
 const SEED_CHARS = 6000;
@@ -25,8 +25,13 @@ async function measureSeedTokens(): Promise<number> {
 	}
 }
 
-function createWarningHarness(contextWindow: number, reserveTokens: number): Promise<Harness> {
+function createWarningHarness(
+	contextWindow: number,
+	reserveTokens: number,
+	options: HarnessOptions = {},
+): Promise<Harness> {
 	return createHarness({
+		...options,
 		models: [{ id: "faux-1", contextWindow, maxTokens: 100 }],
 		settings: {
 			compaction: { enabled: true, reserveTokens, keepRecentTokens: Math.floor(contextWindow / 4) },
@@ -42,6 +47,17 @@ function warningEntries(harness: Harness) {
 
 function sawWarning(request: TranscriptContext): boolean {
 	return request.messages.some((message) => sawWarningMessage(message));
+}
+
+/**
+ * The `context_usage` rule as the model received it. The system message carries the prompt in named
+ * sections, so the rule is read from the section rather than out of a joined prompt string.
+ */
+function contextUsageRule(request: TranscriptContext): string {
+	const system = request.messages.find((message) => message.role === "system") as
+		| { sections?: Record<string, string> }
+		| undefined;
+	return system?.sections?.context_usage ?? "";
 }
 
 function sawWarningMessage(message: TranscriptContext["messages"][number]): boolean {
@@ -89,6 +105,7 @@ describe("context warning", () => {
 			// another one: a number pi already published must never be revised in place.
 			expect(requests.map(sawWarning)).toEqual([false, true, true, true]);
 			expect(warningEntries(harness)).toHaveLength(1);
+			expect(contextUsageRule(requests[1]!)).toContain('lines beginning "[context]"');
 		} finally {
 			harness.cleanup();
 		}
@@ -112,6 +129,48 @@ describe("context warning", () => {
 			await harness.session.prompt("ok");
 
 			expect(warningEntries(harness)).toHaveLength(0);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("promises no warning to a routed selection that cannot get one", async () => {
+		const measured = await measureSeedTokens();
+		const contextWindow = Math.ceil(measured / 0.904);
+		const harness = await createWarningHarness(contextWindow, Math.ceil(contextWindow / 25), {
+			extensionFactories: [
+				(pi) =>
+					pi.registerVirtualModel({
+						provider: "router",
+						id: "auto",
+						name: "Auto",
+						thinkingLevels: ["low"],
+						contextWindow,
+						route: (_request, ctx) => ({
+							model: ctx.modelRegistry.find("faux", "faux-1")!,
+							thinkingLevel: "low",
+						}),
+					}),
+			],
+		});
+
+		try {
+			await harness.session.setModel(harness.session.modelRuntime.getModel("router", "auto")!);
+			const requests: TranscriptContext[] = [];
+			const record = (text: string) => (context: TranscriptContext) => {
+				requests.push(context);
+				return fauxAssistantMessage(text);
+			};
+			harness.setResponses([record("noted"), record("second")]);
+
+			// Usage would be in the first warning band for a directly selected model.
+			await harness.session.prompt("x".repeat(SEED_CHARS));
+			await harness.session.prompt("ok");
+
+			expect(warningEntries(harness)).toHaveLength(0);
+			const rule = contextUsageRule(requests.at(-1)!);
+			expect(rule).toContain("pi does not report context usage");
+			expect(rule).not.toContain('lines beginning "[context]"');
 		} finally {
 			harness.cleanup();
 		}

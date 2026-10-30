@@ -670,6 +670,8 @@ export class AgentSession {
 	 * to measure against and something that will free context, so it is tied to auto-compaction.
 	 */
 	private _reportsContextUsage(): boolean {
+		// A routed selection gets no warning, so it must not be promised one either.
+		if (this.model && isVirtualModel(this.model)) return false;
 		const model = this._limitsModel();
 		if (!model || (model.contextWindow ?? 0) <= 0) return false;
 		return this.settingsManager.getCompactionSettings(model).enabled;
@@ -798,13 +800,23 @@ export class AgentSession {
 	}
 
 	/** Whether `projection`, the current session projection, exceeds the compaction threshold of `model`. */
-	private _exceedsCompactionThreshold(model: Model<any>, projection: SessionProjection): boolean {
-		if (model.contextWindow <= 0) return false;
-		return shouldCompact(
-			estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens,
-			model.contextWindow,
-			this.settingsManager.getCompactionSettings(this.model),
-		);
+	/**
+	 * The compaction decision for a projection, plus the estimate it was made from. Returning the estimate
+	 * lets the caller warn about the same number instead of walking the context a second time.
+	 */
+	private _compactionThresholdCheck(
+		model: Model<any>,
+		projection: SessionProjection,
+	): {
+		exceeds: boolean;
+		tokens: number;
+	} {
+		if (model.contextWindow <= 0) return { exceeds: false, tokens: 0 };
+		const tokens = estimateProjectedContextTokens(projection, this.sessionManager.getBranch()).tokens;
+		return {
+			exceeds: shouldCompact(tokens, model.contextWindow, this.settingsManager.getCompactionSettings(this.model)),
+			tokens,
+		};
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
@@ -812,16 +824,25 @@ export class AgentSession {
 		// A virtual selection is compaction-checked in prepareRequest, against the model the request
 		// routes to; it gets no warning because no step knows the window ahead of time.
 		const model = this.model;
-		if (model && !isVirtualModel(model) && this._exceedsCompactionThreshold(model, projection)) {
-			await this._runAutoCompaction("threshold", false);
-			return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
+		if (model && !isVirtualModel(model)) {
+			const { exceeds, tokens } = this._compactionThresholdCheck(model, projection);
+			if (exceeds) {
+				await this._runAutoCompaction("threshold", false);
+				return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
+			}
+			// Below the compaction point, tell the model how full the context is while it can still act.
+			if (this._appendContextWarning(model, this._usageFromEstimate(model, tokens))) {
+				return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
+			}
 		}
-		// Below the compaction point, tell the model how full the context is while it can still act.
-		const warned = model && !isVirtualModel(model) ? this._appendContextWarning(model, projection) : false;
-		return {
-			...context,
-			messages: warned ? this.sessionManager.buildSessionProjection().messages : projection.messages,
-		};
+		return { ...context, messages: projection.messages };
+	}
+
+	/** Share the shape {@link getContextUsage} returns, so one measurement serves both the footer and the warning. */
+	private _usageFromEstimate(model: Model<any>, tokens: number): ContextUsage | undefined {
+		const contextWindow = model.contextWindow ?? 0;
+		if (contextWindow <= 0) return undefined;
+		return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
 	}
 
 	/**
@@ -830,9 +851,8 @@ export class AgentSession {
 	 * warning is never edited afterwards: a number pi rewrote later would be indistinguishable from a
 	 * measurement.
 	 */
-	private _appendContextWarning(model: Model<any>, projection?: SessionProjection): boolean {
+	private _appendContextWarning(model: Model<any>, usage: ContextUsage | undefined): boolean {
 		if (!this._reportsContextUsage()) return false;
-		const usage = projection ? this._measureContextUsage(model, projection) : this.getContextUsage();
 		if (!usage || usage.tokens === null || usage.percent === null) return false;
 
 		const { reserveTokens } = this.settingsManager.getCompactionSettings(model);
@@ -932,7 +952,7 @@ export class AgentSession {
 			}
 			// The route stands: the router already decided this request. The state entry does not change
 			// the projection.
-			if (this._exceedsCompactionThreshold(route.model, projection)) {
+			if (this._compactionThresholdCheck(route.model, projection).exceeds) {
 				await this._runAutoCompaction("threshold", false);
 				({ previous, context } = await prepare());
 			}
@@ -2048,14 +2068,18 @@ export class AgentSession {
 		if (lastAssistant) {
 			await this._checkCompaction(lastAssistant, false);
 		}
-		// Nothing compacted this turn, so tell the model how full the context is before it acts again. A
-		// virtual selection is skipped with the rest of its between-turn handling.
-		if (this.model && !isVirtualModel(this.model)) this._appendContextWarning(this.model);
+		// Nothing compacted this turn, so tell the model how full the context is before it acts again. The
+		// measurement is memoized, so this is free unless the session grew. A virtual selection is skipped
+		// with the rest of its between-turn handling.
+		if (this.model && !isVirtualModel(this.model)) this._appendContextWarning(this.model, this.getContextUsage());
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 		// Re-read per run: the rule wording follows a setting the user can change mid-session.
 		this._baseSystemPromptOptions.contextUsageReporting = this._reportsContextUsage();
 		const result = await this._extensionRunner.emitBeforeAgentStart(trigger, this._baseSystemPromptOptions);
+		// pi owns this field: a handler value must not survive into the prompt, because the wording promises
+		// `[context]` lines this session either writes or never writes.
+		result.systemPromptOptions.contextUsageReporting = this._reportsContextUsage();
 		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
 		// which updates the live loadout instead. An explicit edit wins; otherwise the live
 		// loadout is authoritative, so a setActiveTools() call is not undone here.
@@ -4475,11 +4499,8 @@ export class AgentSession {
 		return usage;
 	}
 
-	/** Measure context usage against a projection. Prefer getContextUsage(), which caches. */
-	private _measureContextUsage(
-		model: Model<any>,
-		projection = this.sessionManager.buildSessionProjection(),
-	): ContextUsage | undefined {
+	/** Measure context usage against the current projection. Prefer getContextUsage(), which caches. */
+	private _measureContextUsage(model: Model<any>): ContextUsage | undefined {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
@@ -4487,6 +4508,7 @@ export class AgentSession {
 		// Usage is only trustworthy from an assistant that responded after the latest compaction.
 		// Before that, fall back to the estimate the compaction persisted with its summary, plus
 		// anything appended since; entries written before that estimate existed stay unknown.
+		const projection = this.sessionManager.buildSessionProjection();
 		const branch = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branch);
 
