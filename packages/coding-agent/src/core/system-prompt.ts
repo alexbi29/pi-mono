@@ -26,6 +26,13 @@ export interface BuildSystemPromptOptions {
 	promptGuidelines?: string[];
 	/** Text appended from user configuration before project context, skills, and cwd. */
 	appendSystemPrompt?: string;
+	/**
+	 * Whether pi reports context usage to the model with `[context]` lines, which is the case while
+	 * auto-compaction can act. Selects the matching `context_usage` rule wording. pi owns this field and
+	 * overwrites any value an extension handler sets, because the rule promises a signal the session
+	 * either writes or never writes.
+	 */
+	contextUsageReporting?: boolean;
 	/** Additional XML-wrapped prompt sections keyed by tag name. */
 	sections?: Record<string, string>;
 	/** Working directory. */
@@ -43,6 +50,7 @@ export type NormalizedBuildSystemPromptOptions = BuildSystemPromptOptions & {
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
 	appendSystemPrompt: string;
+	contextUsageReporting: boolean;
 	sections: Record<string, string>;
 	contextFiles: Array<{ path: string; content: string }>;
 	skills: Skill[];
@@ -69,6 +77,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		),
 		promptGuidelines: [...(input.promptGuidelines ?? [])],
 		appendSystemPrompt: input.appendSystemPrompt ?? "",
+		contextUsageReporting: input.contextUsageReporting ?? false,
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
@@ -124,6 +133,19 @@ function buildRules(
 	return rules.map((rule) => `- ${rule}`).join("\n");
 }
 
+/**
+ * Rule that tells the model how to treat context usage. Context usage is a runtime measurement the
+ * model cannot observe, and models state it anyway, so the rule removes the license to guess and
+ * names the one valid signal.
+ */
+function renderContextUsageRule(reportsUsage: boolean): string {
+	const measurement =
+		"Context usage is measured only by pi. You cannot observe it: never estimate it, state a percentage, or plan work around your own estimate.";
+	return reportsUsage
+		? `${measurement} pi appends lines beginning "[context]" when usage gets high. The newest such line is the only valid evidence of context pressure; if there is none, there is room.`
+		: `${measurement} pi does not report context usage in this session, so no statement you make about it is supported.`;
+}
+
 /** Build the ordered, independently replaceable sections of the structured system prompt. */
 export function buildSystemPromptSections(input: BuildSystemPromptOptions): SystemPromptSections {
 	const options = normalizeBuildSystemPromptOptions(input);
@@ -135,6 +157,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		toolGuidelines,
 		promptGuidelines,
 		appendSystemPrompt,
+		contextUsageReporting,
 		sections: customSections,
 		cwd,
 		contextFiles,
@@ -170,6 +193,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	}
 
 	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
+	promptSections.context_usage = renderContextUsageRule(contextUsageReporting);
 	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
 	// A hidden reader is still reachable through another tool, so skills stay but the hint names no tool.
 	const readers = ["read", "bash"] as const;

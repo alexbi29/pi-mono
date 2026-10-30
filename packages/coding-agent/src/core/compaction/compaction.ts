@@ -37,6 +37,7 @@ import {
 } from "../session-manager.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
+	CONTEXT_FIGURES_SUMMARY_RULE,
 	computeFileLists,
 	createFileOps,
 	extractFileOpsFromMessage,
@@ -44,6 +45,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
+	withoutStaleContextFigures,
 } from "./utils.ts";
 
 // ============================================================================
@@ -100,7 +102,8 @@ function extractFileOperations(
 function getMessagesFromProjectedEntryForCompaction(entry: ProjectedSessionEntry): AgentMessage[] {
 	if (entry.sourceEntry.type === "compaction") return [];
 	// System messages are prompt state, not conversation; the compaction entry carries their replay.
-	return entry.messages.filter((message) => message.role !== "system");
+	// Filtered here rather than at serialization, so extension summarizers get clean preparation too.
+	return withoutStaleContextFigures(entry.messages.filter((message) => message.role !== "system"));
 }
 
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
@@ -539,7 +542,8 @@ Use this EXACT format:
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.
+${CONTEXT_FIGURES_SUMMARY_RULE}`;
 
 const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
@@ -548,6 +552,7 @@ const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summar
 - UPDATE "Next Steps" based on what was accomplished
 - PRESERVE exact file paths, function names, and error messages
 - If something is no longer relevant, you may remove it
+- ${CONTEXT_FIGURES_SUMMARY_RULE}
 
 Use this EXACT format:
 
@@ -758,7 +763,7 @@ export async function generateSummaryWithUsage(
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const llmMessages = convertToLlm(withoutStaleContextFigures(currentMessages));
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build the prompt with conversation wrapped in tags
@@ -985,7 +990,8 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 ## Context Needed to Continue
 - [Information from these messages needed to understand the later work]
 
-Only summarize information explicitly present above. Do not infer or recreate later messages.`;
+Only summarize information explicitly present above. Do not infer or recreate later messages.
+${CONTEXT_FIGURES_SUMMARY_RULE}`;
 
 /**
  * Generate summaries for compaction using prepared data.

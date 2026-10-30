@@ -1,6 +1,6 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Usage } from "@earendil-works/pi-ai/compat";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai/compat";
+import { createAssistantMessageEventStream, fauxAssistantMessage, getModel } from "@earendil-works/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -11,10 +11,15 @@ import {
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
 	findCutPoint,
+	generateSummaryWithUsage,
 	getLastAssistantUsage,
 	prepareCompaction,
+	serializeConversation,
 	shouldCompact,
+	withoutStaleContextFigures,
 } from "../src/core/compaction/index.ts";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../src/core/context-warning.ts";
+import { convertToLlm, createCustomMessage } from "../src/core/messages.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -518,6 +523,28 @@ describe("prepareCompaction", () => {
 		expect(preparation?.messagesToSummarize).toEqual([]);
 		expect(preparation?.turnPrefixMessages).toEqual([user.message]);
 	});
+
+	it("hands summarizers, including extension ones, no [context] warnings", () => {
+		const user = createMessageEntry(createUserMessage("first turn"));
+		const warning: CustomMessageEntry = {
+			...createCustomMessageEntry(
+				"[context] 238,412 of 262,144 tokens used (91%). Keep working, but don't start large edits.",
+			),
+			customType: CONTEXT_WARNING_CUSTOM_TYPE,
+		};
+		const assistant = createMessageEntry(createAssistantMessage("first answer"));
+		const nextUser = createMessageEntry(createUserMessage("second turn"));
+		const nextAssistant = createMessageEntry(createAssistantMessage("second answer"));
+		const preparation = prepareCompaction([user, warning, assistant, nextUser, nextAssistant], {
+			...DEFAULT_COMPACTION_SETTINGS,
+			keepRecentTokens: 1,
+		});
+
+		// An extension serializing preparation messages itself must not carry the figure into its summary.
+		const summarized = [...(preparation?.messagesToSummarize ?? []), ...(preparation?.turnPrefixMessages ?? [])];
+		expect(extractText(summarized)).toContain("first answer");
+		expect(serializeConversation(convertToLlm(summarized))).not.toContain("[context]");
+	});
 });
 
 describe("prepareCompaction with previous compaction", () => {
@@ -652,4 +679,105 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 		console.log("Original messages:", loaded.messages.length);
 		console.log("After compaction:", reloaded.messages.length);
 	}, 60000);
+});
+
+describe("summarization input", () => {
+	const summaryModel: Model<"anthropic-messages"> = {
+		id: "test-model",
+		name: "Test Model",
+		api: "anthropic-messages",
+		provider: "anthropic",
+		baseUrl: "https://api.anthropic.com",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 200_000,
+		maxTokens: 8192,
+	};
+
+	/** Figures pi measured about a context, as the model would see them. */
+	function contextFigures(): AgentMessage[] {
+		return [
+			{ role: "user", content: "start", timestamp: 1 } as AgentMessage,
+			createCustomMessage(
+				CONTEXT_WARNING_CUSTOM_TYPE,
+				"[context] 238,412 of 262,144 tokens used (91%). pi compacts automatically at 94%. Keep working, but don't start large edits.",
+				true,
+				{ band: 90, percent: 91, tokens: 238_412, contextWindow: 262_144 },
+				new Date(1).toISOString(),
+			),
+			{
+				role: "compactionSummary",
+				summary: "Earlier work",
+				tokensBefore: 200_000,
+				tokensAfter: 35_066,
+				contextWindow: 262_144,
+				timestamp: 1,
+			},
+		];
+	}
+
+	function requestText(messages: Array<{ content: unknown }>): string {
+		const parts: string[] = [];
+		for (const message of messages) {
+			const content: unknown = message.content;
+			if (typeof content === "string") parts.push(content);
+			else if (Array.isArray(content))
+				for (const block of content as Array<{ type: string; text?: string }>)
+					if (block.type === "text" && block.text !== undefined) parts.push(block.text);
+		}
+		return parts.join("\n");
+	}
+
+	it("keeps [context] warnings and stale post-compaction figures out of the serialized input", () => {
+		const messages = contextFigures();
+
+		// The same messages do reach the model in a normal request.
+		const live = serializeConversation(convertToLlm(messages));
+		expect(live).toContain("[context]");
+		expect(live).toContain("Context after compaction");
+
+		// A summary replaces the context those figures measured, so neither may be carried over.
+		const summaryInput = serializeConversation(convertToLlm(withoutStaleContextFigures(messages)));
+		expect(summaryInput).not.toContain("[context]");
+		expect(summaryInput).not.toContain("Context after compaction");
+		expect(summaryInput).toContain("Earlier work");
+	});
+
+	it("sends neither figure to the summarization request", async () => {
+		const prompts: string[] = [];
+		const streamFn: StreamFn = (_model, context) => {
+			prompts.push(requestText(context.messages));
+			const stream = createAssistantMessageEventStream();
+			const response: AssistantMessage = {
+				...fauxAssistantMessage("summary"),
+				api: summaryModel.api,
+				provider: summaryModel.provider,
+				model: summaryModel.id,
+			};
+			queueMicrotask(() => stream.push({ type: "done", reason: "stop", message: response }));
+			return stream;
+		};
+
+		await generateSummaryWithUsage(
+			contextFigures(),
+			summaryModel,
+			undefined,
+			"test-key",
+			undefined,
+			new AbortController().signal,
+			undefined,
+			undefined,
+			"off",
+			streamFn,
+		);
+
+		expect(prompts).toHaveLength(1);
+		// The instruction text names `[context]` as forbidden, so check the conversation it is given.
+		const prompt = prompts[0]!;
+		const conversation = prompt.slice(prompt.indexOf("<conversation>"), prompt.indexOf("</conversation>"));
+		expect(conversation).not.toContain("[context]");
+		expect(conversation).not.toContain("Context after compaction");
+		expect(conversation).toContain("Earlier work");
+	});
 });

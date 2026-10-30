@@ -68,6 +68,7 @@ import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
 	type CompactionPreparation,
 	type CompactionResult,
+	type CompactionSettings,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
@@ -78,6 +79,13 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
+import {
+	CONTEXT_WARNING_CUSTOM_TYPE,
+	type ContextWarningDetails,
+	formatContextWarning,
+	latestContextWarning,
+	nextContextWarning,
+} from "./context-warning.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -115,7 +123,7 @@ import {
 } from "./extensions/index.ts";
 import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
-import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
+import { type BashExecutionMessage, type CustomMessage, convertToLlm, createCustomMessage } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
@@ -417,6 +425,8 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	/** Memo for getContextUsage(); keyed on leaf entry plus limits model. */
+	private _contextUsageCache: { key: string; usage: ContextUsage | undefined } | undefined;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -658,6 +668,18 @@ export class AgentSession {
 	}
 
 	/**
+	 * Whether pi reports context usage to the model with `[context]` lines. Reporting needs a window
+	 * to measure against and something that will free context, so it is tied to auto-compaction.
+	 */
+	private _reportsContextUsage(): boolean {
+		// A routed selection gets no warning, so it must not be promised one either.
+		if (this.model && isVirtualModel(this.model)) return false;
+		const model = this._limitsModel();
+		if (!model || (model.contextWindow ?? 0) <= 0) return false;
+		return this.settingsManager.getCompactionSettings(model).enabled;
+	}
+
+	/**
 	 * Install tool hooks once on the Agent instance.
 	 *
 	 * The callbacks read `this._extensionRunner` at execution time, so extension reload swaps in the
@@ -790,14 +812,69 @@ export class AgentSession {
 	}
 
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
-		const projection = this.sessionManager.buildSessionProjection();
-		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
+		// A virtual selection is compaction-checked in prepareRequest, against the model the request
+		// routes to; it gets no warning because no step knows the window ahead of time.
 		const model = this.model;
-		if (!model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
-			return { ...context, messages: projection.messages };
+		if (!model || isVirtualModel(model)) {
+			return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 		}
-		await this._runAutoCompaction("threshold", false);
-		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
+		return { ...context, messages: await this._compactOrReportContextUsage(model) };
+	}
+
+	/**
+	 * Compact when the context passed the compaction point of `model`, otherwise append a `[context]` line
+	 * when one is due. Returns the messages of the resulting context. Both decisions use one estimate, so
+	 * a line never reports usage past the compaction point it prints.
+	 */
+	private async _compactOrReportContextUsage(model: Model<any>): Promise<AgentMessage[]> {
+		const projection = this.sessionManager.buildSessionProjection();
+		const settings = this.settingsManager.getCompactionSettings(model);
+		// Checked before measuring: with compaction off neither decision can act, and measuring walks the
+		// whole context.
+		if (!settings.enabled || model.contextWindow <= 0) return projection.messages;
+
+		const branch = this.sessionManager.getBranch();
+		const tokens = estimateProjectedContextTokens(projection, branch).tokens;
+		if (shouldCompact(tokens, model.contextWindow, settings)) {
+			await this._runAutoCompaction("threshold", false);
+			return this.sessionManager.buildSessionProjection().messages;
+		}
+		// Appending refreshes agent state from the new projection, so it is not rebuilt here.
+		return this._appendContextWarning(model, settings, branch, tokens)
+			? this.agent.state.messages
+			: projection.messages;
+	}
+
+	/**
+	 * Append a `[context]` line when one is due for `tokens` on `branch`. Returns whether an entry was
+	 * added. A line is never edited afterwards: a number pi rewrote later would be indistinguishable from a
+	 * measurement.
+	 */
+	private _appendContextWarning(
+		model: Model<any>,
+		settings: CompactionSettings,
+		branch: SessionEntry[],
+		tokens: number,
+	): boolean {
+		const { contextWindow } = model;
+		const usage = { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
+		const compactionPoint = ((contextWindow - settings.reserveTokens) / contextWindow) * 100;
+		const warning = nextContextWarning(usage, latestContextWarning(branch), compactionPoint);
+		if (!warning) return false;
+
+		const details: ContextWarningDetails = { band: warning.band, ...usage };
+		// Persisted through the standard custom-message path, so prepareRequest picks it up for the
+		// request that follows and it stays in the transcript as history.
+		this._appendCustomMessage(
+			createCustomMessage(
+				CONTEXT_WARNING_CUSTOM_TYPE,
+				formatContextWarning(warning, usage, compactionPoint),
+				true,
+				details,
+				new Date().toISOString(),
+			),
+		);
+		return true;
 	}
 
 	private _installAgentRequestProjection(): void {
@@ -925,6 +1002,7 @@ export class AgentSession {
 			const options = normalizeBuildSystemPromptOptions({
 				...runOptions,
 				selectedTools: this.getActiveToolNames(),
+				contextUsageReporting: this._reportsContextUsage(),
 				toolSnippets: { ...this._baseSystemPromptOptions.toolSnippets, ...runOptions.toolSnippets },
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
 			});
@@ -990,6 +1068,8 @@ export class AgentSession {
 						draft.details,
 						true,
 						draft.usage,
+						undefined,
+						this._limitsModel()?.contextWindow,
 					);
 					break;
 				}
@@ -1773,6 +1853,7 @@ export class AgentSession {
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			hiddenTools: [...this._hiddenDeclarations],
+			contextUsageReporting: this._reportsContextUsage(),
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
 		});
@@ -1963,9 +2044,19 @@ export class AgentSession {
 		if (lastAssistant) {
 			await this._checkCompaction(lastAssistant, false);
 		}
+		// The response check above trusts the last provider usage, which misses anything appended since, such
+		// as `!bash` output. Apply the between-turns rule to the whole context too, so the first request of
+		// the run neither crosses the compaction point nor carries a line contradicting it. A virtual
+		// selection is checked in prepareRequest instead.
+		if (this.model && !isVirtualModel(this.model)) await this._compactOrReportContextUsage(this.model);
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+		// Re-read per run: the rule wording follows a setting the user can change mid-session.
+		this._baseSystemPromptOptions.contextUsageReporting = this._reportsContextUsage();
 		const result = await this._extensionRunner.emitBeforeAgentStart(trigger, this._baseSystemPromptOptions);
+		// pi owns this field: a handler value must not survive into the prompt, because the wording promises
+		// `[context]` lines this session either writes or never writes.
+		result.systemPromptOptions.contextUsageReporting = this._reportsContextUsage();
 		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
 		// which updates the live loadout instead. An explicit edit wins; otherwise the live
 		// loadout is authoritative, so a setActiveTools() call is not undone here.
@@ -2950,6 +3041,7 @@ export class AgentSession {
 				fromExtension,
 				usage,
 				estimatedTokensAfter,
+				this._limitsModel()?.contextWindow,
 			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
@@ -3304,6 +3396,7 @@ export class AgentSession {
 				fromExtension,
 				usage,
 				estimatedTokensAfter,
+				this._limitsModel()?.contextWindow,
 			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
@@ -4366,10 +4459,25 @@ export class AgentSession {
 		};
 	}
 
+	/**
+	 * Context usage of the current context, memoized on the leaf entry and the model it was
+	 * measured against. Entries are append-only, so an unchanged leaf means an unchanged
+	 * projection; measuring walks the projection and the branch, which render paths call often.
+	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
 		if (!model) return undefined;
 
+		const cacheKey = `${model.provider}/${model.id}:${model.contextWindow ?? 0}@${this.sessionManager.getLeafId() ?? ""}`;
+		if (this._contextUsageCache?.key === cacheKey) return this._contextUsageCache.usage;
+
+		const usage = this._measureContextUsage(model);
+		this._contextUsageCache = { key: cacheKey, usage };
+		return usage;
+	}
+
+	/** Measure context usage against the current projection. Prefer getContextUsage(), which caches. */
+	private _measureContextUsage(model: Model<any>): ContextUsage | undefined {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 

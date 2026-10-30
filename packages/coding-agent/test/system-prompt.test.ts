@@ -37,6 +37,44 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("context_usage section", () => {
+		test("forbids estimating context usage and says pi does not report it by default", () => {
+			const prompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
+
+			expect(prompt).toContain("Context usage is measured only by pi. You cannot observe it: never estimate it");
+			expect(prompt).toContain("pi does not report context usage in this session");
+			expect(prompt).not.toContain('lines beginning "[context]"');
+		});
+
+		test("names the [context] line as the only valid signal while auto-compaction is on", () => {
+			const prompt = buildSystemPrompt({
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+				contextUsageReporting: true,
+			});
+
+			expect(prompt).toContain('pi appends lines beginning "[context]"');
+			expect(prompt).toContain("if there is none, there is room");
+			expect(prompt).not.toContain("pi does not report context usage");
+		});
+
+		test("survives a custom system prompt, because it describes harness behaviour", () => {
+			const prompt = buildSystemPrompt({
+				cwd: "/tmp",
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+				customPrompt: "You are Exact.",
+				contextUsageReporting: true,
+			});
+
+			expect(prompt).toContain("<context_usage>");
+			expect(prompt).toContain('pi appends lines beginning "[context]"');
+		});
+	});
+
 	describe("prompt structure", () => {
 		test("keeps the default and custom prompt prefixes exact", () => {
 			const defaultPrompt = buildSystemPrompt({ cwd: "/tmp", selectedTools: [], contextFiles: [], skills: [] });
@@ -49,7 +87,8 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
-			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
+			// A custom prompt replaces pi's guidance sections, but harness facts still follow it.
+			expect(customPrompt.startsWith("You are Exact.\n\n<context_usage>\n")).toBe(true);
 		});
 
 		test("preserves an exact forced prompt without sections", () => {

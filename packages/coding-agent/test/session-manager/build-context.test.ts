@@ -1,10 +1,15 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../../src/core/context-warning.ts";
+import { convertToLlm } from "../../src/core/messages.ts";
 import {
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
 	type CustomEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
 	type SessionMessageEntry,
@@ -44,6 +49,7 @@ function compaction(
 	summary: string,
 	firstKeptEntryId: string,
 	tokensAfter?: number,
+	contextWindow?: number,
 ): CompactionEntry {
 	return {
 		type: "compaction",
@@ -54,6 +60,7 @@ function compaction(
 		firstKeptEntryId,
 		tokensBefore: 1000,
 		tokensAfter,
+		contextWindow,
 	};
 }
 
@@ -65,12 +72,45 @@ function custom(id: string, parentId: string | null, customType: string, data?: 
 	return { type: "custom", id, parentId, timestamp: "2025-01-01T00:00:00Z", customType, data };
 }
 
+function contextWarning(id: string, parentId: string | null, band: number): CustomMessageEntry {
+	return {
+		type: "custom_message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		customType: CONTEXT_WARNING_CUSTOM_TYPE,
+		content: `[context] ${band}% band warning`,
+		display: true,
+		details: { band, percent: band, tokens: 100, contextWindow: 100 },
+	};
+}
+
 function thinkingLevel(id: string, parentId: string | null, level: string): ThinkingLevelChangeEntry {
 	return { type: "thinking_level_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", thinkingLevel: level };
 }
 
 function modelChange(id: string, parentId: string | null, provider: string, modelId: string): ModelChangeEntry {
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
+}
+
+function customTexts(messages: AgentMessage[]): string[] {
+	return messages
+		.filter((message) => message.role === "custom")
+		.map((message) => (message as { content: string }).content);
+}
+
+function joinedRequestText(messages: Message[]): string {
+	const parts: string[] = [];
+	for (const message of messages) {
+		const content: unknown = message.content;
+		if (typeof content === "string") parts.push(content);
+		// Converted messages hold typed content blocks; read them structurally instead of importing
+		// every block kind just to pick out text.
+		else if (Array.isArray(content))
+			for (const block of content as Array<{ type: string; text?: string }>)
+				if (block.type === "text" && block.text !== undefined) parts.push(block.text);
+	}
+	return parts.join("\n");
 }
 
 describe("buildSessionContext", () => {
@@ -131,6 +171,46 @@ describe("buildSessionContext", () => {
 	});
 
 	describe("with compaction", () => {
+		it("drops a context warning the compaction invalidated, and keeps one made after it", () => {
+			const stale: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				contextWarning("2", "1", 90),
+				msg("3", "2", "user", "second"),
+				compaction("4", "3", "Summary", "1"),
+				msg("5", "4", "user", "third"),
+			];
+			expect(customTexts(buildSessionContext(stale).messages)).toEqual([]);
+
+			const fresh: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				compaction("2", "1", "Summary", "1"),
+				contextWarning("3", "2", 90),
+				msg("4", "3", "user", "second"),
+			];
+			expect(customTexts(buildSessionContext(fresh).messages)).toEqual(["[context] 90% band warning"]);
+		});
+
+		it("states the size of the context it produced, in the text the model receives", () => {
+			const measured: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response"),
+				compaction("3", "2", "Summary", "1", 4000, 262_144),
+			];
+			const text = joinedRequestText(convertToLlm(buildSessionContext(measured).messages));
+			expect(text).toContain("Context after compaction: ~4,000 of 262,144 tokens (2%).");
+
+			// Entries written before the estimate existed must not claim a figure. A window without an
+			// estimate is the extension-provided compaction shape, and is just as unmeasured.
+			const unmeasured: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response"),
+				compaction("3", "2", "Summary", "1"),
+				compaction("4", "3", "Summary from an extension", "1", undefined, 262_144),
+			];
+			const legacyText = joinedRequestText(convertToLlm(buildSessionContext(unmeasured).messages));
+			expect(legacyText).not.toContain("Context after compaction");
+		});
+
 		it("includes summary before kept messages", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "first"),

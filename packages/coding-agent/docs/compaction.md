@@ -42,6 +42,31 @@ A provider context-overflow error or an early final `stopReason: "length"` can s
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
+### Context Usage Warning
+
+The model cannot measure its own context. Usage arrives in provider responses, which pi consumes and never resends, so a model that wants to know how full it is has to guess. A guessed figure that lands in the transcript keeps being reused after compaction, because compaction keeps part of that transcript.
+
+When auto-compaction can act (`compaction.enabled`, default), pi appends a line to the session before the next assistant request:
+
+```text
+[context] 238,412 of 262,144 tokens used (91%). pi compacts automatically at 94%. Keep working, but don't start large edits.
+```
+
+The rules:
+
+- One warning per 5-point band, starting at the first band: 90%, or the highest 5-point band at least one step below the compaction point when that is lower, never below one step. Pi compacts once usage passes `(contextWindow - reserveTokens) / contextWindow`; with the default reserve that is 93.75% of a 262,144-token window, so the first band there is 85%. A band closer than one step to the compaction point would be skipped by any tool result larger than the gap. Bands are constants in [`context-warning.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/context-warning.ts), not settings.
+- Usage in the text is rounded to whole percent and the compaction point is rounded up, so the line never claims pressure earlier than pi will act. Band comparisons use the unrounded measurement.
+- The line is appended and never edited. A number pi revised later would be indistinguishable from a measurement, and the provider request must stay append-only to keep prefix caching.
+- When the newest visible line no longer holds without a compaction (a switch to a model with another window, or usage more than one step below its band after a context edit), pi appends a newer line with the current figure. Below the first band it ends with `Earlier [context] lines no longer apply.`
+- Compaction and the warning are decided from one estimate of the whole context, also before the first request of a run, so a line never reports usage past the compaction point it prints.
+- Any later compaction removes the warning from model context, even though the entry stays in the session file and the TUI. The band counter ignores dropped warnings, so a context that fills up again is warned about again.
+- After compaction, the summary wrapper states the size of the context pi produced: `Context after compaction: ~35,066 of 262,144 tokens (13%). That was its size when compaction ran, not current usage.` The note stays unchanged while usage grows, so it says it is not current. Entries written before pi persisted that estimate state nothing rather than guess.
+- `[context]` lines and persisted post-compaction figures are stripped in `prepareCompaction()` and `prepareBranchEntries()`, so extension summarizers get clean input too; `withoutStaleContextFigures()` does the same for messages serialized by other means. Every summarization prompt forbids carrying context figures into a summary.
+- When auto-compaction is off, pi emits no warning, because a number the model cannot act on only makes it stop early. The system prompt then says pi does not report context usage.
+- A routed (virtual) model selection gets no warning: the context window is only known once the request is routed, and the warning would have to be written before that choice exists.
+
+The system prompt carries the matching rule in a `context_usage` section: usage is measured only by pi, the model must never estimate it, and the newest `[context]` line is the only evidence of context pressure.
+
 ### How It Works
 
 1. **Find cut point**: Walk backwards through the finalized session projection, accumulating token estimates until `keepRecentTokens` (default 20k, configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`) is reached
@@ -153,6 +178,7 @@ interface CompactionEntry<T = unknown> {
   firstKeptEntryId: string;
   tokensBefore: number;
   tokensAfter?: number; // estimated context tokens after compaction
+  contextWindow?: number; // window that estimate was taken against
   usage?: Usage;       // LLM usage that generated the summary
   fromHook?: boolean;  // true if provided by extension (legacy field name)
   details?: T;         // implementation-specific data

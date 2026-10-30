@@ -6,7 +6,7 @@ import { VERSION } from "../config.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { writeZipArchive } from "../utils/zip.ts";
 import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction/compaction.ts";
-import { serializeConversation } from "./compaction/utils.ts";
+import { serializeConversation, withoutStaleContextFigures } from "./compaction/utils.ts";
 import type { CrashRecord } from "./crash-log.ts";
 import type { Extension } from "./extensions/types.ts";
 import { convertToLlm } from "./messages.ts";
@@ -336,7 +336,7 @@ export async function generateBugReportSummary(options: GenerateBugReportSummary
 		messages.length < options.messages.length
 			? `Note: only the last ${messages.length} of ${options.messages.length} messages are shown.`
 			: undefined,
-		`<conversation>\n${serializeConversation(convertToLlm(messages))}\n</conversation>`,
+		`<conversation>\n${serializeConversation(convertToLlm(withoutStaleContextFigures(messages)))}\n</conversation>`,
 		hint ? `<user-report>\n${hint}\n</user-report>` : undefined,
 		BUG_SUMMARY_INSTRUCTIONS,
 	]

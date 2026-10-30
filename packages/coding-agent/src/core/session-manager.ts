@@ -31,6 +31,7 @@ import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
 import { normalizePath, pathsEqual, resolvePath } from "../utils/paths.ts";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "./context-warning.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -97,6 +98,8 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	tokensBefore: number;
 	/** Estimated context tokens after compaction, when known. */
 	tokensAfter?: number;
+	/** Context window that estimate was taken against, so the ratio stays meaningful after a model switch. */
+	contextWindow?: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -468,6 +471,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 			entry.tokensBefore,
 			entry.timestamp,
 			entry.tokensAfter,
+			entry.contextWindow,
 		);
 		return entry.systemMessage ? [entry.systemMessage, summary] : [summary];
 	}
@@ -513,6 +517,10 @@ export function buildContextEntries(
 			foundFirstKept = true;
 		}
 		if (foundFirstKept && !(entry.type === "message" && entry.message.role === "system")) {
+			// A `[context]` warning states usage at the moment it was measured. A compaction invalidates
+			// exactly that, so it leaves the model's context even when it sits in the kept range; the
+			// session file and the TUI keep it as history.
+			if (entry.type === "custom_message" && entry.customType === CONTEXT_WARNING_CUSTOM_TYPE) continue;
 			contextEntries.push(entry);
 		}
 	}
@@ -1293,6 +1301,7 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 		tokensAfter?: number,
+		contextWindow?: number,
 	): string {
 		const timestamp = new Date().toISOString();
 		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
@@ -1306,6 +1315,7 @@ export class SessionManager {
 			firstKeptEntryId: firstKeptEntryId ?? id,
 			tokensBefore,
 			tokensAfter,
+			contextWindow,
 			details,
 			usage,
 			fromHook,

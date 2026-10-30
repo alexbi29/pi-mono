@@ -4,6 +4,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { contentText, type Message } from "@earendil-works/pi-ai";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../context-warning.ts";
 
 // ============================================================================
 // File Operation Tracking
@@ -153,6 +154,29 @@ export function serializeConversation(messages: Message[]): string {
 
 	return parts.join("\n\n");
 }
+
+/**
+ * Remove the context figures a summary is about to invalidate before they reach a summarizer. `[context]`
+ * warnings and a persisted post-compaction note state the size of a context that stops existing once this
+ * summary replaces it; carried over, they read as live measurements and the model plans around a window
+ * that no longer exists. Compaction and branch preparation already apply it; call it when serializing
+ * session messages for a summary by other means.
+ */
+export function withoutStaleContextFigures(messages: AgentMessage[]): AgentMessage[] {
+	return messages.flatMap((message): AgentMessage[] => {
+		if (message.role === "custom" && message.customType === CONTEXT_WARNING_CUSTOM_TYPE) return [];
+		// Only the figures go: the summary text stays, and convertToLlm renders no note without them.
+		if (message.role === "compactionSummary")
+			return [{ ...message, tokensAfter: undefined, contextWindow: undefined }];
+		return [message];
+	});
+}
+
+/**
+ * Summarization prompt rule for the figures {@link withoutStaleContextFigures} cannot strip: ones quoted
+ * inside other messages. Shared so every summarization prompt states it the same way.
+ */
+export const CONTEXT_FIGURES_SUMMARY_RULE = `Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
 
 // ============================================================================
 // Summarization System Prompt

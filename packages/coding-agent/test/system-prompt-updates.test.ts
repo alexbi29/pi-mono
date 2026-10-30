@@ -45,9 +45,38 @@ describe("system prompt updates", () => {
 			const head = harness.session.messages[0];
 			if (head?.role !== "system") throw new Error("expected system message");
 			expect(head.content).toBe("");
-			expect(Object.keys(head.sections ?? {})).toEqual(["preamble", "tools", "rules", "docs", "cwd"]);
+			expect(Object.keys(head.sections ?? {})).toEqual([
+				"preamble",
+				"tools",
+				"rules",
+				"docs",
+				"context_usage",
+				"cwd",
+			]);
 			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(["read", "bash", "edit", "write"]);
 			expect(getSystemMessageText(head)).toBe(harness.session.systemPrompt);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	test("states how context usage is reported, following the auto-compaction setting", async () => {
+		const harness = await createHarness();
+		try {
+			const reported: Array<string | undefined> = [];
+			const record = (context: TranscriptContext) => {
+				const sections = context.messages.filter((message) => message.role === "system").at(-1);
+				reported.push(sections?.sections?.context_usage ?? undefined);
+				return fauxAssistantMessage("answer");
+			};
+			harness.setResponses([record, record]);
+
+			await harness.session.prompt("one");
+			harness.session.settingsManager.setCompactionEnabled(false);
+			await harness.session.prompt("two");
+
+			expect(reported[0]).toContain('pi appends lines beginning "[context]"');
+			expect(reported[1]).toContain("pi does not report context usage in this session");
 		} finally {
 			harness.cleanup();
 		}

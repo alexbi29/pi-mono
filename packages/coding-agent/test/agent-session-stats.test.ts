@@ -314,3 +314,39 @@ describe("AgentSession.getSessionStats", () => {
 		}
 	});
 });
+
+describe("AgentSession.getContextUsage memoization", () => {
+	it("reuses the measurement while the leaf entry is unchanged", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("hello", 1));
+			sessionManager.appendMessage(createAssistantMessage("hi", 200, 2));
+			syncAgentMessages(session, sessionManager);
+
+			const first = session.getContextUsage();
+			expect(first?.tokens).toBe(200);
+			// Same object identity proves the second call did not walk the projection again.
+			expect(session.getContextUsage()).toBe(first);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("re-measures after an entry is appended", async () => {
+		const { session, sessionManager } = await createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("hello", 1));
+			sessionManager.appendMessage(createAssistantMessage("hi", 200, 2));
+			syncAgentMessages(session, sessionManager);
+			expect(session.getContextUsage()?.tokens).toBe(200);
+
+			sessionManager.appendMessage(createAssistantMessage("more", 900, 3));
+			syncAgentMessages(session, sessionManager);
+			expect(session.getContextUsage()?.tokens).toBe(900);
+		} finally {
+			session.dispose();
+		}
+	});
+});

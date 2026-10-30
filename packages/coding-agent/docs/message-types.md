@@ -234,6 +234,8 @@ interface CustomMessage<T = unknown> {
 
 Pi converts its content to a user message for model requests. `display` controls terminal rendering; `details` is not sent to the model.
 
+Pi writes one of these itself: `customType: "pi.context-warning"` reports context usage to the model with a `[context]` line. See [Compaction](compaction.md#context-usage-warning).
+
 ### BranchSummaryMessage
 
 ```typescript
@@ -255,11 +257,12 @@ interface CompactionSummaryMessage {
   summary: string;
   tokensBefore: number;
   tokensAfter?: number; // estimated context tokens after compaction
+  contextWindow?: number; // window that estimate was taken against
   timestamp: number;
 }
 ```
 
-Pi creates this context message from a persisted `compaction` entry.
+Pi creates this context message from a persisted `compaction` entry. When the estimate is present, the text sent to the model ends with a line stating the size of the context pi produced (`Context after compaction: ~35,066 of 262,144 tokens (13%). That was its size when compaction ran, not current usage.`), because compaction invalidates any usage figure the model saw earlier.
 
 ## AgentMessage union
 
