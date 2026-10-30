@@ -32,7 +32,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
-	withoutContextWarnings,
+	withoutStaleContextFigures,
 } from "./utils.ts";
 
 // ============================================================================
@@ -341,7 +341,7 @@ export async function generateBranchSummary(
 
 	// Transform to LLM-compatible messages, then serialize to text
 	// Serialization prevents the model from treating it as a conversation to continue
-	const llmMessages = convertToLlm(withoutContextWarnings(messages));
+	const llmMessages = convertToLlm(withoutStaleContextFigures(messages));
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build prompt

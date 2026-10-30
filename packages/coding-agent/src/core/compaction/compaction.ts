@@ -44,7 +44,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
-	withoutContextWarnings,
+	withoutStaleContextFigures,
 } from "./utils.ts";
 
 // ============================================================================
@@ -761,7 +761,7 @@ export async function generateSummaryWithUsage(
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(withoutContextWarnings(currentMessages));
+	const llmMessages = convertToLlm(withoutStaleContextFigures(currentMessages));
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build the prompt with conversation wrapped in tags
@@ -1128,7 +1128,7 @@ async function generateTurnPrefixSummary(
 	customInstructions?: string,
 	summaryMaxTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
-	const llmMessages = convertToLlm(withoutContextWarnings(messages));
+	const llmMessages = convertToLlm(withoutStaleContextFigures(messages));
 	const conversationText = serializeConversation(llmMessages);
 	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	if (customInstructions) {

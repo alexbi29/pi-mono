@@ -118,17 +118,6 @@ function truncateForSummary(text: string, maxChars: number): string {
  * summarization request larger than the context it summarizes. Visible text,
  * tool calls, and tool results record what happened.
  */
-/**
- * Drop `[context]` warnings from messages handed to a summarizer. A warning measures the context the
- * summary is about to replace; carried over, it reads as a live measurement and the model plans around
- * a full window that no longer exists.
- */
-export function withoutContextWarnings(messages: AgentMessage[]): AgentMessage[] {
-	return messages.filter(
-		(message) => !(message.role === "custom" && message.customType === CONTEXT_WARNING_CUSTOM_TYPE),
-	);
-}
-
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
 
@@ -164,6 +153,22 @@ export function serializeConversation(messages: Message[]): string {
 	}
 
 	return parts.join("\n\n");
+}
+
+/**
+ * Remove the context figures a summary is about to invalidate before they reach a summarizer. `[context]`
+ * warnings and a persisted post-compaction note state the size of a context that stops existing once this
+ * summary replaces it; carried over, they read as live measurements and the model plans around a window
+ * that no longer exists.
+ */
+export function withoutStaleContextFigures(messages: AgentMessage[]): AgentMessage[] {
+	return messages.flatMap((message): AgentMessage[] => {
+		if (message.role === "custom" && message.customType === CONTEXT_WARNING_CUSTOM_TYPE) return [];
+		// Only the figures go: the summary text stays, and convertToLlm renders no note without them.
+		if (message.role === "compactionSummary")
+			return [{ ...message, tokensAfter: undefined, contextWindow: undefined }];
+		return [message];
+	});
 }
 
 // ============================================================================

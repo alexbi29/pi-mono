@@ -199,11 +199,13 @@ describe("buildSessionContext", () => {
 			const text = joinedRequestText(convertToLlm(buildSessionContext(measured).messages));
 			expect(text).toContain("Context after compaction: ~4,000 of 262,144 tokens (2%).");
 
-			// Entries written before the estimate existed must not claim a figure.
+			// Entries written before the estimate existed must not claim a figure. A window without an
+			// estimate is the extension-provided compaction shape, and is just as unmeasured.
 			const unmeasured: SessionEntry[] = [
 				msg("1", null, "user", "first"),
 				msg("2", "1", "assistant", "response"),
 				compaction("3", "2", "Summary", "1"),
+				compaction("4", "3", "Summary from an extension", "1", undefined, 262_144),
 			];
 			const legacyText = joinedRequestText(convertToLlm(buildSessionContext(unmeasured).messages));
 			expect(legacyText).not.toContain("Context after compaction");
