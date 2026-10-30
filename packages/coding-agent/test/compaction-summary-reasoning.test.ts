@@ -73,7 +73,7 @@ describe("generateSummary reasoning options", () => {
 		completeSimpleMock.mockResolvedValue(mockSummaryResponse);
 	});
 
-	it("uses the provided thinking level for reasoning-capable models", async () => {
+	it("caps summary reasoning to the lowest supported level, never the session level", async () => {
 		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
@@ -96,11 +96,29 @@ describe("generateSummary reasoning options", () => {
 		expect(result.usage).toEqual(mockSummaryResponse.usage);
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		// Reasoning and summary text share one output budget, so the session's "medium" is
+		// capped to "minimal", the lowest level this model supports.
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			reasoning: "medium",
+			reasoning: "minimal",
 			apiKey: "test-key",
 			maxTokens: 8192,
 		});
+	});
+
+	it("requests no reasoning when session thinking is off", async () => {
+		await generateSummaryWithUsage(
+			messages,
+			createModel(true),
+			undefined,
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"off",
+		);
+
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
 	it("preserves the string result from generateSummary", async () => {

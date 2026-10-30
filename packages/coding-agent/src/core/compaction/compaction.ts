@@ -9,6 +9,7 @@ import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-a
 import {
 	contentText,
 	getCurrentSystemMessage,
+	getSupportedThinkingLevels,
 	normalizeContext,
 	type RetryCallbacks,
 	type RetryPolicy,
@@ -589,6 +590,25 @@ export function resolveSummarizationMaxTokens(model: Model<any>, requested: numb
 	return requested ?? model.maxTokens;
 }
 
+/** Thinking level a summary may request; "off" is expressed by returning undefined instead. */
+type SummarizationThinkingLevel = Exclude<ThinkingLevel, "off">;
+
+/**
+ * Resolve the thinking level a summary requests. Summaries never inherit the session
+ * thinking level: reasoning and summary text share one output budget, so a high level can
+ * spend it all on reasoning and truncate the summary, which fails compaction outright. The
+ * lowest level the model supports keeps some deliberation and leaves the budget to the text;
+ * a session with thinking off, or a model without reasoning, gets no reasoning at all.
+ */
+export function resolveSummarizationThinkingLevel(
+	model: Model<any>,
+	sessionThinkingLevel: ThinkingLevel | undefined,
+): SummarizationThinkingLevel | undefined {
+	if (!model.reasoning || sessionThinkingLevel === undefined || sessionThinkingLevel === "off") return undefined;
+	const lowest = getSupportedThinkingLevels(model).find((level) => level !== "off");
+	return lowest === undefined ? undefined : (lowest as SummarizationThinkingLevel);
+}
+
 /**
  * Returns an error message when a summarization response cannot safely be persisted.
  * A length stop contains partial text and must not become a session checkpoint.
@@ -618,8 +638,9 @@ function createSummarizationOptions(
 	sessionId: string | undefined,
 ): SimpleStreamOptions {
 	const options: SimpleStreamOptions = { signal, apiKey, headers, env, sessionId };
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
+	const summaryThinkingLevel = resolveSummarizationThinkingLevel(model, thinkingLevel);
+	if (summaryThinkingLevel) {
+		options.reasoning = summaryThinkingLevel;
 	}
 	return options;
 }

@@ -22,6 +22,7 @@ import {
 	estimateTokens,
 	getSummarizationFailure,
 	resolveSummarizationMaxTokens,
+	resolveSummarizationThinkingLevel,
 } from "./compaction.ts";
 import {
 	computeFileLists,
@@ -368,8 +369,9 @@ export async function generateBranchSummary(
 		signal,
 		maxTokens: desiredMaxTokens,
 	};
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		requestOptions.reasoning = thinkingLevel;
+	const summaryThinkingLevel = resolveSummarizationThinkingLevel(model, thinkingLevel);
+	if (summaryThinkingLevel) {
+		requestOptions.reasoning = summaryThinkingLevel;
 	}
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 

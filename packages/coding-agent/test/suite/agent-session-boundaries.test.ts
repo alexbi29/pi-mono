@@ -626,6 +626,20 @@ describe("AgentSession actionable boundaries", () => {
 		expect(harness.session.getContextUsage()?.tokens).toBeNull();
 	});
 
+	it("estimates context from the post-compaction size the compaction persisted", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		const retained = fauxAssistantMessage("retained");
+		retained.usage = { ...retained.usage, input: 10_000, totalTokens: 10_001 };
+		const retainedId = harness.sessionManager.appendMessage(retained);
+		harness.sessionManager.appendCompaction("summary", retainedId, 10_001, undefined, undefined, undefined, 4_000);
+		harness.session.refreshContext();
+
+		const usage = harness.session.getContextUsage();
+		expect(usage?.tokens).toBe(4_000);
+		expect(usage?.percent).toBeCloseTo((4_000 / (usage?.contextWindow ?? 1)) * 100);
+	});
+
 	it("persists custom context sent during pre-settlement before continuing", async () => {
 		let handled = false;
 		const requests: string[] = [];

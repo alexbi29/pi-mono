@@ -44,7 +44,7 @@ function response(content: AssistantMessage["content"]): AssistantMessage {
 }
 
 describe("branch summarization", () => {
-	it("passes the thinking level only for reasoning-capable models", async () => {
+	it("caps branch summary reasoning to the lowest supported level, never the session level", async () => {
 		const seen: Array<SimpleStreamOptions["reasoning"]> = [];
 		const streamFn: StreamFn = (_model, _context, options) => {
 			seen.push(options?.reasoning);
@@ -61,7 +61,9 @@ describe("branch summarization", () => {
 		await generateBranchSummary(entries, { model: reasoningModel, signal, streamFn, thinkingLevel: "off" });
 		await generateBranchSummary(entries, { model, signal, streamFn, thinkingLevel: "high" });
 
-		expect(seen).toEqual(["xhigh", undefined, undefined]);
+		// "minimal" is the lowest level the model supports; the session's xhigh would leave the
+		// summary too little of the shared output budget to finish.
+		expect(seen).toEqual(["minimal", undefined, undefined]);
 	});
 
 	it("does not override tool choice for branch summaries", async () => {

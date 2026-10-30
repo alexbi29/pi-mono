@@ -391,7 +391,8 @@ describe("AgentSession virtual models", () => {
 
 		expect(result.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
-		// The router's model and thinking level apply. The provider layer sizes output from that model.
-		expect(summaries).toEqual(["large:low", "large:low"]);
+		// The router's model applies; the provider layer sizes output from it. Reasoning does not
+		// follow the routed thinking level and stays at the lowest level the model supports.
+		expect(summaries).toEqual(["large:minimal", "large:minimal"]);
 	});
 });

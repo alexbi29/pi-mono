@@ -4374,8 +4374,9 @@ export class AgentSession {
 		if (contextWindow <= 0) return undefined;
 
 		// After compaction, the last assistant usage reflects pre-compaction context size.
-		// We can only trust usage from an assistant that responded after the latest compaction.
-		// If no such assistant exists, context token count is unknown until the next LLM response.
+		// Usage is only trustworthy from an assistant that responded after the latest compaction.
+		// Before that, fall back to the estimate the compaction persisted with its summary, plus
+		// anything appended since; entries written before that estimate existed stay unknown.
 		const projection = this.sessionManager.buildSessionProjection();
 		const branch = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branch);
@@ -4398,7 +4399,25 @@ export class AgentSession {
 			const hasPostCompactionUsage = branch
 				.slice(compactionIndex + 1)
 				.some((entry) => projectedAssistants.has(entry.id));
-			if (!hasPostCompactionUsage) return { tokens: null, contextWindow, percent: null };
+			if (!hasPostCompactionUsage) {
+				// The compaction persisted an estimate of the context it produced. Reuse it and add
+				// whatever was appended since, instead of showing "?" until the next LLM response.
+				const summaryTokens = latestCompaction.tokensAfter;
+				const projectedCompactionIndex = projection.entries.findIndex(
+					(entry) => entry.sourceEntry.id === latestCompaction.id,
+				);
+				if (summaryTokens === undefined || projectedCompactionIndex === -1) {
+					return { tokens: null, contextWindow, percent: null };
+				}
+				const appendedEntryIds = new Set(branch.slice(compactionIndex + 1).map((entry) => entry.id));
+				// Entries kept by the compaction are re-emitted after the boundary and are already
+				// inside the persisted estimate, so only branch entries newer than it are added.
+				const appended = projection.entries
+					.filter((entry) => appendedEntryIds.has(entry.sourceEntry.id))
+					.flatMap((entry) => entry.messages);
+				const tokens = summaryTokens + estimateContextTokens(appended).tokens;
+				return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
+			}
 		}
 
 		const estimate = estimateProjectedContextTokens(projection, branch);

@@ -22,6 +22,8 @@
 
 ### Fixed
 
+- Fixed compaction and branch summaries failing with "generation hit the token cap" on models with a small output limit. Summarization no longer inherits the session thinking level: reasoning and summary text share one output budget, so a high level could spend it all on reasoning and truncate the summary. Summaries now request the lowest thinking level the model supports, and none when session thinking is off.
+- Fixed the footer showing `?/200K` context usage after a compaction until the next model response. pi now shows the post-compaction token estimate the compaction persisted, plus anything appended since.
 - Fixed a `length` stop after compaction being treated as context overflow when the request still fits the context window, which could trigger unnecessary auto-compactions.
 - Fixed a saved "Do not trust" decision being ignored for projects without trust-requiring resources, for example a folder with only `AGENTS.md`. pi auto-trusted such projects, so `ctx.isProjectTrusted()` returned true and package commands treated them as trusted. A saved decision in `trust.json` now takes precedence; auto-trust applies only when no decision is saved ([#10947](https://github.com/earendil-works/pi/issues/10947))
 - Fixed `Shift+Enter` queueing a follow-up instead of inserting a newline in Apple Terminal setups that send `ESC` + Return. pi now checks the local Shift key state for that sequence, as it already did for plain Return; `Alt+Enter` without Shift still queues a follow-up ([#11559](https://github.com/earendil-works/pi/issues/11559))
