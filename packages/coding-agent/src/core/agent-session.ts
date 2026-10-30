@@ -78,6 +78,12 @@ import {
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
+import {
+	CONTEXT_WARNING_CUSTOM_TYPE,
+	type ContextWarningDetails,
+	formatContextWarning,
+	nextContextWarningBand,
+} from "./context-warning.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
@@ -115,7 +121,7 @@ import {
 } from "./extensions/index.ts";
 import { type BeforeAgentStartTrigger, emitSessionShutdownEvent } from "./extensions/runner.ts";
 import { createToolNameMatcher, isMcpToolName } from "./mcp-servers.ts";
-import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
+import { type BashExecutionMessage, type CustomMessage, convertToLlm, createCustomMessage } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
@@ -805,11 +811,73 @@ export class AgentSession {
 		const projection = this.sessionManager.buildSessionProjection();
 		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
 		const model = this.model;
-		if (!model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
-			return { ...context, messages: projection.messages };
+		if (model && !isVirtualModel(model) && this._exceedsCompactionThreshold(model, projection)) {
+			await this._runAutoCompaction("threshold", false);
+			return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 		}
-		await this._runAutoCompaction("threshold", false);
-		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
+		// Below the compaction point, tell the model how full the context is while it can still act.
+		const warned = model && !isVirtualModel(model) ? this._appendContextWarning(model, projection) : false;
+		return {
+			...context,
+			messages: warned ? this.sessionManager.buildSessionProjection().messages : projection.messages,
+		};
+	}
+
+	/**
+	 * Append the `[context]` warning when usage crossed a band the model has not been told about. Returns
+	 * whether an entry was added, so the caller only re-derives the projection when the request changed. A
+	 * warning is never edited afterwards: a number pi rewrote later would be indistinguishable from a
+	 * measurement.
+	 */
+	private _appendContextWarning(model: Model<any>, projection?: SessionProjection): boolean {
+		if (!this._reportsContextUsage()) return false;
+		const usage = projection ? this._measureContextUsage(model, projection) : this.getContextUsage();
+		if (!usage || usage.tokens === null || usage.percent === null) return false;
+
+		const { reserveTokens } = this.settingsManager.getCompactionSettings(model);
+		const compactionPoint = ((model.contextWindow - reserveTokens) / model.contextWindow) * 100;
+		const band = nextContextWarningBand(usage.percent, this._latestContextWarningBand(), compactionPoint);
+		if (band === undefined) return false;
+
+		const details: ContextWarningDetails = {
+			band,
+			percent: usage.percent,
+			tokens: usage.tokens,
+			contextWindow: usage.contextWindow,
+		};
+		// Persisted through the standard custom-message path, so prepareRequest picks it up for the
+		// request that follows and it stays in the transcript as history.
+		this._appendCustomMessage(
+			createCustomMessage(
+				CONTEXT_WARNING_CUSTOM_TYPE,
+				formatContextWarning(
+					{ tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent },
+					compactionPoint,
+				),
+				true,
+				details,
+				new Date().toISOString(),
+			),
+		);
+		return true;
+	}
+
+	/**
+	 * Band of the newest warning still in the model's context. Warnings before the latest compaction were
+	 * dropped from it, so they must not suppress a new band.
+	 */
+	private _latestContextWarningBand(): number | undefined {
+		const branch = this.sessionManager.getBranch();
+		const compaction = getLatestCompactionEntry(branch);
+		const firstVisibleIndex = compaction ? branch.findIndex((entry) => entry.id === compaction.id) + 1 : 0;
+		for (let index = branch.length - 1; index >= firstVisibleIndex; index--) {
+			const entry = branch[index];
+			if (entry?.type !== "custom_message" || entry.customType !== CONTEXT_WARNING_CUSTOM_TYPE) continue;
+			// Session files are parsed without validation, so the stored band is checked, not trusted.
+			const band = (entry.details as Partial<ContextWarningDetails> | undefined)?.band;
+			return typeof band === "number" ? band : undefined;
+		}
+		return undefined;
 	}
 
 	private _installAgentRequestProjection(): void {
@@ -1977,6 +2045,9 @@ export class AgentSession {
 		if (lastAssistant) {
 			await this._checkCompaction(lastAssistant, false);
 		}
+		// Nothing compacted this turn, so tell the model how full the context is before it acts again. A
+		// virtual selection defers to prepareRequest, which knows the model the request routes to.
+		if (this.model && !isVirtualModel(this.model)) this._appendContextWarning(this.model);
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
 		// Re-read per run: the rule wording follows a setting the user can change mid-session.
@@ -4399,8 +4470,11 @@ export class AgentSession {
 		return usage;
 	}
 
-	/** Measure context usage against the current projection. Prefer getContextUsage(), which caches. */
-	private _measureContextUsage(model: Model<any>): ContextUsage | undefined {
+	/** Measure context usage against a projection. Prefer getContextUsage(), which caches. */
+	private _measureContextUsage(
+		model: Model<any>,
+		projection = this.sessionManager.buildSessionProjection(),
+	): ContextUsage | undefined {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
@@ -4408,7 +4482,6 @@ export class AgentSession {
 		// Usage is only trustworthy from an assistant that responded after the latest compaction.
 		// Before that, fall back to the estimate the compaction persisted with its summary, plus
 		// anything appended since; entries written before that estimate existed stay unknown.
-		const projection = this.sessionManager.buildSessionProjection();
 		const branch = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branch);
 

@@ -1,10 +1,13 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../../src/core/context-warning.ts";
 import {
 	type BranchSummaryEntry,
 	buildContextEntries,
 	buildSessionContext,
 	type CompactionEntry,
 	type CustomEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
 	type SessionMessageEntry,
@@ -65,12 +68,31 @@ function custom(id: string, parentId: string | null, customType: string, data?: 
 	return { type: "custom", id, parentId, timestamp: "2025-01-01T00:00:00Z", customType, data };
 }
 
+function contextWarning(id: string, parentId: string | null, band: number): CustomMessageEntry {
+	return {
+		type: "custom_message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		customType: CONTEXT_WARNING_CUSTOM_TYPE,
+		content: `[context] ${band}% band warning`,
+		display: true,
+		details: { band, percent: band, tokens: 100, contextWindow: 100 },
+	};
+}
+
 function thinkingLevel(id: string, parentId: string | null, level: string): ThinkingLevelChangeEntry {
 	return { type: "thinking_level_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", thinkingLevel: level };
 }
 
 function modelChange(id: string, parentId: string | null, provider: string, modelId: string): ModelChangeEntry {
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
+}
+
+function customTexts(messages: AgentMessage[]): string[] {
+	return messages
+		.filter((message) => message.role === "custom")
+		.map((message) => (message as { content: string }).content);
 }
 
 describe("buildSessionContext", () => {
@@ -131,6 +153,25 @@ describe("buildSessionContext", () => {
 	});
 
 	describe("with compaction", () => {
+		it("drops a context warning the compaction invalidated, and keeps one made after it", () => {
+			const stale: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				contextWarning("2", "1", 90),
+				msg("3", "2", "user", "second"),
+				compaction("4", "3", "Summary", "1"),
+				msg("5", "4", "user", "third"),
+			];
+			expect(customTexts(buildSessionContext(stale).messages)).toEqual([]);
+
+			const fresh: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				compaction("2", "1", "Summary", "1"),
+				contextWarning("3", "2", 90),
+				msg("4", "3", "user", "second"),
+			];
+			expect(customTexts(buildSessionContext(fresh).messages)).toEqual(["[context] 90% band warning"]);
+		});
+
 		it("includes summary before kept messages", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "first"),
