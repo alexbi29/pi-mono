@@ -1071,6 +1071,8 @@ export class AgentSession {
 						draft.details,
 						true,
 						draft.usage,
+						undefined,
+						this._limitsModel()?.contextWindow,
 					);
 					break;
 				}
@@ -3037,6 +3039,7 @@ export class AgentSession {
 				fromExtension,
 				usage,
 				estimatedTokensAfter,
+				this._limitsModel()?.contextWindow,
 			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
@@ -3391,6 +3394,7 @@ export class AgentSession {
 				fromExtension,
 				usage,
 				estimatedTokensAfter,
+				this._limitsModel()?.contextWindow,
 			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();

@@ -1,6 +1,8 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { CONTEXT_WARNING_CUSTOM_TYPE } from "../../src/core/context-warning.ts";
+import { convertToLlm } from "../../src/core/messages.ts";
 import {
 	type BranchSummaryEntry,
 	buildContextEntries,
@@ -47,6 +49,7 @@ function compaction(
 	summary: string,
 	firstKeptEntryId: string,
 	tokensAfter?: number,
+	contextWindow?: number,
 ): CompactionEntry {
 	return {
 		type: "compaction",
@@ -57,6 +60,7 @@ function compaction(
 		firstKeptEntryId,
 		tokensBefore: 1000,
 		tokensAfter,
+		contextWindow,
 	};
 }
 
@@ -93,6 +97,20 @@ function customTexts(messages: AgentMessage[]): string[] {
 	return messages
 		.filter((message) => message.role === "custom")
 		.map((message) => (message as { content: string }).content);
+}
+
+function joinedRequestText(messages: Message[]): string {
+	const parts: string[] = [];
+	for (const message of messages) {
+		const content: unknown = message.content;
+		if (typeof content === "string") parts.push(content);
+		// Converted messages hold typed content blocks; read them structurally instead of importing
+		// every block kind just to pick out text.
+		else if (Array.isArray(content))
+			for (const block of content as Array<{ type: string; text?: string }>)
+				if (block.type === "text" && block.text !== undefined) parts.push(block.text);
+	}
+	return parts.join("\n");
 }
 
 describe("buildSessionContext", () => {
@@ -170,6 +188,25 @@ describe("buildSessionContext", () => {
 				msg("4", "3", "user", "second"),
 			];
 			expect(customTexts(buildSessionContext(fresh).messages)).toEqual(["[context] 90% band warning"]);
+		});
+
+		it("states the size of the context it produced, in the text the model receives", () => {
+			const measured: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response"),
+				compaction("3", "2", "Summary", "1", 4000, 262_144),
+			];
+			const text = joinedRequestText(convertToLlm(buildSessionContext(measured).messages));
+			expect(text).toContain("Context after compaction: ~4,000 of 262,144 tokens (2%).");
+
+			// Entries written before the estimate existed must not claim a figure.
+			const unmeasured: SessionEntry[] = [
+				msg("1", null, "user", "first"),
+				msg("2", "1", "assistant", "response"),
+				compaction("3", "2", "Summary", "1"),
+			];
+			const legacyText = joinedRequestText(convertToLlm(buildSessionContext(unmeasured).messages));
+			expect(legacyText).not.toContain("Context after compaction");
 		});
 
 		it("includes summary before kept messages", () => {

@@ -3527,6 +3527,7 @@ export class InteractiveMode {
 							event.entry.tokensBefore,
 							event.entry.timestamp,
 							event.entry.tokensAfter,
+							event.entry.contextWindow,
 						),
 					);
 					if (event.entry.usage) {

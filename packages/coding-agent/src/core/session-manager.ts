@@ -98,6 +98,8 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	tokensBefore: number;
 	/** Estimated context tokens after compaction, when known. */
 	tokensAfter?: number;
+	/** Context window that estimate was taken against, so the ratio stays meaningful after a model switch. */
+	contextWindow?: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
 	/** Usage from the LLM call(s) that generated this summary, if available */
@@ -469,6 +471,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 			entry.tokensBefore,
 			entry.timestamp,
 			entry.tokensAfter,
+			entry.contextWindow,
 		);
 		return entry.systemMessage ? [entry.systemMessage, summary] : [summary];
 	}
@@ -1298,6 +1301,7 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 		tokensAfter?: number,
+		contextWindow?: number,
 	): string {
 		const timestamp = new Date().toISOString();
 		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
@@ -1311,6 +1315,7 @@ export class SessionManager {
 			firstKeptEntryId: firstKeptEntryId ?? id,
 			tokensBefore,
 			tokensAfter,
+			contextWindow,
 			details,
 			usage,
 			fromHook,

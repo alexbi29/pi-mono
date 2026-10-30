@@ -65,6 +65,8 @@ export interface CompactionSummaryMessage {
 	tokensBefore: number;
 	/** Estimated context tokens after compaction, when known. */
 	tokensAfter?: number;
+	/** Context window the estimate was taken against, when known. */
+	contextWindow?: number;
 	timestamp: number;
 }
 
@@ -113,14 +115,36 @@ export function createCompactionSummaryMessage(
 	tokensBefore: number,
 	timestamp: string,
 	tokensAfter?: number,
+	contextWindow?: number,
 ): CompactionSummaryMessage {
 	return {
 		role: "compactionSummary",
 		summary: summary,
 		tokensBefore,
 		tokensAfter,
+		contextWindow,
 		timestamp: new Date(timestamp).getTime(),
 	};
+}
+
+/** Grouping for the figures in the post-compaction note. Fixed locale: the text is model-facing and tested. */
+const contextNoteFormat = new Intl.NumberFormat("en-US");
+
+/**
+ * Line that follows a compaction summary. Compaction invalidates any usage figure the model saw
+ * earlier, so pi states the size of the context it produced. Empty for entries written before the
+ * estimate existed.
+ */
+export function compactionContextNote(message: CompactionSummaryMessage): string {
+	const { tokensAfter, contextWindow } = message;
+	if (tokensAfter === undefined) return "";
+	if (contextWindow === undefined || contextWindow <= 0) {
+		return `\n\nContext after compaction: ~${contextNoteFormat.format(tokensAfter)} tokens.`;
+	}
+	const percent = Math.round((tokensAfter / contextWindow) * 100);
+	return `\n\nContext after compaction: ~${contextNoteFormat.format(tokensAfter)} of ${contextNoteFormat.format(
+		contextWindow,
+	)} tokens (${percent}%).`;
 }
 
 /** Convert CustomMessageEntry to AgentMessage format */
@@ -181,7 +205,11 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					return {
 						role: "user",
 						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+							{
+								type: "text" as const,
+								text:
+									COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX + compactionContextNote(m),
+							},
 						],
 						timestamp: m.timestamp,
 					};
