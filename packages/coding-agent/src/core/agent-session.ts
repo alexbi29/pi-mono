@@ -660,6 +660,16 @@ export class AgentSession {
 	}
 
 	/**
+	 * Whether pi reports context usage to the model with `[context]` lines. Reporting needs a window
+	 * to measure against and something that will free context, so it is tied to auto-compaction.
+	 */
+	private _reportsContextUsage(): boolean {
+		const model = this._limitsModel();
+		if (!model || (model.contextWindow ?? 0) <= 0) return false;
+		return this.settingsManager.getCompactionSettings(model).enabled;
+	}
+
+	/**
 	 * Install tool hooks once on the Agent instance.
 	 *
 	 * The callbacks read `this._extensionRunner` at execution time, so extension reload swaps in the
@@ -927,6 +937,7 @@ export class AgentSession {
 			const options = normalizeBuildSystemPromptOptions({
 				...runOptions,
 				selectedTools: this.getActiveToolNames(),
+				contextUsageReporting: this._reportsContextUsage(),
 				toolSnippets: { ...this._baseSystemPromptOptions.toolSnippets, ...runOptions.toolSnippets },
 				toolGuidelines: { ...this._baseSystemPromptOptions.toolGuidelines, ...runOptions.toolGuidelines },
 			});
@@ -1775,6 +1786,7 @@ export class AgentSession {
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			hiddenTools: [...this._hiddenDeclarations],
+			contextUsageReporting: this._reportsContextUsage(),
 			toolSnippets,
 			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
 		});
@@ -1967,6 +1979,8 @@ export class AgentSession {
 		}
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
+		// Re-read per run: the rule wording follows a setting the user can change mid-session.
+		this._baseSystemPromptOptions.contextUsageReporting = this._reportsContextUsage();
 		const result = await this._extensionRunner.emitBeforeAgentStart(trigger, this._baseSystemPromptOptions);
 		// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
 		// which updates the live loadout instead. An explicit edit wins; otherwise the live
