@@ -17,7 +17,7 @@
 - Tool call blocks no longer add blank lines above and below, so the colored boxes hug their content.
 - `/model` and `/scoped-models` now show a model's name next to its ID when the name adds words the ID lacks, such as a renamed `models.json` override ([#5916](https://github.com/earendil-works/pi/issues/5916), [#11347](https://github.com/earendil-works/pi/pull/11347))
 - Compaction summaries now show the estimated token count after compaction and keep the `[compaction]` label on the same line as the summary text.
-- Compaction, turn-prefix, and branch summaries now request a 16,384-token output budget instead of the model's default output limit, and a length-stop failure reports the effective token cap.
+- Added `compaction.summaryMaxTokens` and `branchSummary.summaryMaxTokens` to cap summary output; omitted values use the model's output limit. A length-stop failure reports the effective token cap.
 - The footer's live output rate now shows the average since the current assistant response started instead of a noisy instantaneous/EWMA rate.
 
 ### Fixed

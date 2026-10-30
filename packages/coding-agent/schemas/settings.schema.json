@@ -125,6 +125,12 @@
           "maximum": 9007199254740991,
           "default": 20000
         },
+        "summaryMaxTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Maximum output tokens for compaction and turn-prefix summaries. Omit to use the model's output limit."
+        },
         "modelOverrides": {
           "type": "object",
           "patternProperties": {
@@ -155,6 +161,12 @@
           "type": "number",
           "description": "Tokens reserved for the prompt and LLM response.",
           "default": 16384
+        },
+        "summaryMaxTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "Maximum output tokens for branch summaries. Omit to use the model's output limit."
         },
         "skipPrompt": {
           "type": "boolean",

@@ -32,7 +32,7 @@ Auto-compaction triggers when:
 contextTokens > contextWindow - reserveTokens
 ```
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). It only decides when compaction starts. Compaction, turn-prefix, and branch summary requests use a 16,384-token output budget, reduced when needed so input and output fit the context window. A length-stop failure reports the effective cap.
+By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). It only decides when compaction starts. Compaction, turn-prefix, and branch summary requests use the model's output limit by default. Set `compaction.summaryMaxTokens` or `branchSummary.summaryMaxTokens` to cap the summary output. The effective budget is reduced when needed so input and output fit the context window. A length-stop failure reports the effective cap.
 
 During a multi-turn agent run, Pi checks the canonical projected context after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts during `prepareNextTurn`, then performs the existing catch-up steering poll before `turn_start`. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks before a new user prompt and performs final-attempt overflow recovery after the low-level run ends.
 
@@ -424,7 +424,8 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "keepRecentTokens": 20000,
+    "summaryMaxTokens": 16384
   }
 }
 ```
@@ -434,6 +435,7 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 | `enabled` | `true` | Enable auto-compaction |
 | `reserveTokens` | `16384` | Free context tokens below which auto-compaction starts |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
+| `summaryMaxTokens` | model output limit | Maximum output tokens for compaction and turn-prefix summaries |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
 

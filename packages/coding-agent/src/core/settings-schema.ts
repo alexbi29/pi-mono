@@ -2,7 +2,7 @@ import { ModelThinkingLevelSchema } from "@earendil-works/pi-ai/providers/model-
 import { type Static, type TSchemaOptions, Type } from "typebox";
 import { SETTINGS_DEFAULTS } from "./settings-defaults.ts";
 
-function nonNegativeSafeInteger(options: { default?: number } = {}) {
+function nonNegativeSafeInteger(options: TSchemaOptions = {}) {
 	return Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, ...options });
 }
 
@@ -19,6 +19,12 @@ const CompactionSettingsSchema = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.compaction.enabled })),
 	reserveTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.reserveTokens })),
 	keepRecentTokens: Type.Optional(nonNegativeSafeInteger({ default: SETTINGS_DEFAULTS.compaction.keepRecentTokens })),
+	summaryMaxTokens: Type.Optional(
+		nonNegativeSafeInteger({
+			description:
+				"Maximum output tokens for compaction and turn-prefix summaries. Omit to use the model's output limit.",
+		}),
+	),
 	modelOverrides: Type.Optional(
 		Type.Record(Type.String(), CompactionModelOverrideSchema, {
 			description: 'Per-model overrides keyed by exact "provider/modelId" strings.',
@@ -31,6 +37,11 @@ const BranchSummarySettingsSchema = Type.Object({
 		Type.Number({
 			description: "Tokens reserved for the prompt and LLM response.",
 			default: SETTINGS_DEFAULTS.branchSummary.reserveTokens,
+		}),
+	),
+	summaryMaxTokens: Type.Optional(
+		nonNegativeSafeInteger({
+			description: "Maximum output tokens for branch summaries. Omit to use the model's output limit.",
 		}),
 	),
 	skipPrompt: Type.Optional(

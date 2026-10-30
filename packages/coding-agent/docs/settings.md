@@ -74,6 +74,7 @@ CLI tool options override this setting for one invocation. `--tools` with only `
 | `compaction.enabled` | boolean | `true` | Enable automatic compaction. |
 | `compaction.reserveTokens` | number | `16384` | Free context tokens below which automatic compaction starts. |
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens retained without summarization. |
+| `compaction.summaryMaxTokens` | number | Model output limit | Maximum output tokens for compaction and turn-prefix summaries. |
 | `compaction.modelOverrides` | object | None | Per-model token settings keyed by exact `provider/modelId`. |
 
 <a id="per-model-compaction-overrides"></a>
@@ -87,6 +88,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `branchSummary.reserveTokens` | number | `16384` | Tokens reserved when summarizing branch history. |
+| `branchSummary.summaryMaxTokens` | number | Model output limit | Maximum output tokens for branch summaries. |
 | `branchSummary.skipPrompt` | boolean | `false` | Skip the branch-summary prompt and default to no summary. |
 
 ## Terminal and display

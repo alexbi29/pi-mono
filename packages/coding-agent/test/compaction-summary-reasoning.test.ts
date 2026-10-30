@@ -84,6 +84,12 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			"medium",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			8192,
 		);
 
 		expect(result.text).toBe("## Goal\nTest summary");
@@ -93,6 +99,7 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
 			reasoning: "medium",
 			apiKey: "test-key",
+			maxTokens: 8192,
 		});
 	});
 
@@ -100,6 +107,38 @@ describe("generateSummary reasoning options", () => {
 		await expect(generateSummary(messages, createModel(false), undefined, "test-key")).resolves.toBe(
 			"## Goal\nTest summary",
 		);
+	});
+
+	it("uses the configured compaction summary output cap", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 4096, keepRecentTokens: 4096, summaryMaxTokens: 4096 },
+		};
+
+		await compact(preparation, createModel(false), "test-key");
+
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ maxTokens: 4096 });
+	});
+
+	it("defaults the compaction summary output cap to the model output limit", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 4096, keepRecentTokens: 4096 },
+		};
+
+		await compact(preparation, createModel(false, 8192), "test-key");
+
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ maxTokens: 8192 });
 	});
 
 	it("uses fresh routing sessions without prompt caching", async () => {

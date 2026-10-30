@@ -21,7 +21,7 @@ import {
 	completeSummarization,
 	estimateTokens,
 	getSummarizationFailure,
-	SUMMARIZATION_MAX_TOKENS,
+	resolveSummarizationMaxTokens,
 } from "./compaction.ts";
 import {
 	computeFileLists,
@@ -89,6 +89,8 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved when selecting branch history (default 16384) */
 	reserveTokens?: number;
+	/** Optional output cap for the branch summary. Omitted uses the model's output limit. */
+	summaryMaxTokens?: number;
 	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
 	streamFn?: StreamFn;
 	/** Retry policy for transient summarization errors. Reuses coding-agent's `settings.retry`. */
@@ -312,6 +314,7 @@ export async function generateBranchSummary(
 		customInstructions,
 		replaceInstructions,
 		reserveTokens = 16384,
+		summaryMaxTokens,
 		streamFn,
 		retry,
 		callbacks,
@@ -356,13 +359,14 @@ export async function generateBranchSummary(
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
 	const context = normalizeContext({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages });
-	const tokenCap = clampMaxTokensToContext(model, context, SUMMARIZATION_MAX_TOKENS);
+	const desiredMaxTokens = resolveSummarizationMaxTokens(model, summaryMaxTokens);
+	const tokenCap = clampMaxTokensToContext(model, context, desiredMaxTokens);
 	const requestOptions: SimpleStreamOptions = {
 		apiKey,
 		headers,
 		env,
 		signal,
-		maxTokens: SUMMARIZATION_MAX_TOKENS,
+		maxTokens: desiredMaxTokens,
 	};
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		requestOptions.reasoning = thinkingLevel;

@@ -13,6 +13,25 @@ describe("compaction model overrides", () => {
 		expect(manager.getCompactionSettings(model)).toEqual(defaults);
 	});
 
+	it("returns configured summary output caps", () => {
+		const manager = SettingsManager.inMemory({
+			compaction: { summaryMaxTokens: 8192 },
+			branchSummary: { summaryMaxTokens: 4096 },
+		});
+		expect(manager.getCompactionSettings(model)).toEqual({ ...defaults, summaryMaxTokens: 8192 });
+		expect(manager.getBranchSummarySettings()).toEqual({
+			reserveTokens: 16384,
+			skipPrompt: false,
+			summaryMaxTokens: 4096,
+		});
+	});
+
+	it("omits summary output caps when they are not configured", () => {
+		const manager = SettingsManager.inMemory();
+		expect(manager.getCompactionSettings(model)).not.toHaveProperty("summaryMaxTokens");
+		expect(manager.getBranchSummarySettings()).not.toHaveProperty("summaryMaxTokens");
+	});
+
 	it("resolves each field independently and keeps individual getters consistent", () => {
 		const manager = SettingsManager.inMemory({
 			compaction: {
@@ -140,32 +159,37 @@ describe("compaction model overrides", () => {
 		});
 	});
 
-	describe.each(["reserveTokens", "keepRecentTokens"] as const)("ordinary compaction.%s", (field) => {
-		it.each([null, -1, 1.5, "400000", true, {}, [], Number.MAX_SAFE_INTEGER + 1])(
-			"reports invalid values even when a valid model override exists: %j",
-			(value) => {
-				const storage = new InMemorySettingsStorage();
-				storage.withLock("global", () =>
-					JSON.stringify({
-						compaction: {
-							[field]: value,
-							modelOverrides: { [modelKey]: { [field]: 4096 } },
-						},
-					}),
-				);
-				const manager = SettingsManager.fromStorage(storage);
-				const error = `Invalid compaction.${field} setting: ${String(value)}. Expected a non-negative safe integer.`;
-				expect(() => manager.getCompactionSettings()).toThrow(error);
-				expect(() => manager.getCompactionSettings(model)).toThrow(error);
-			},
-		);
+	describe.each(["reserveTokens", "keepRecentTokens", "summaryMaxTokens"] as const)(
+		"ordinary compaction.%s",
+		(field) => {
+			it.each([null, -1, 1.5, "400000", true, {}, [], Number.MAX_SAFE_INTEGER + 1])(
+				"reports invalid values even when a valid model override exists: %j",
+				(value) => {
+					const storage = new InMemorySettingsStorage();
+					storage.withLock("global", () =>
+						JSON.stringify({
+							compaction: {
+								[field]: value,
+								modelOverrides: { [modelKey]: { [field]: 4096 } },
+							},
+						}),
+					);
+					const manager = SettingsManager.fromStorage(storage);
+					const error = `Invalid compaction.${field} setting: ${String(value)}. Expected a non-negative safe integer.`;
+					expect(() => manager.getCompactionSettings()).toThrow(error);
+					expect(() => manager.getCompactionSettings(model)).toThrow(error);
+				},
+			);
 
-		it.each([Number.NaN, Infinity, -Infinity])("reports non-finite runtime values: %s", (value) => {
-			const manager = SettingsManager.inMemory();
-			manager.applyOverrides({ compaction: { [field]: value } });
-			expect(() => manager.getCompactionSettings()).toThrow(`Invalid compaction.${field} setting: ${String(value)}`);
-		});
-	});
+			it.each([Number.NaN, Infinity, -Infinity])("reports non-finite runtime values: %s", (value) => {
+				const manager = SettingsManager.inMemory();
+				manager.applyOverrides({ compaction: { [field]: value } });
+				expect(() => manager.getCompactionSettings()).toThrow(
+					`Invalid compaction.${field} setting: ${String(value)}`,
+				);
+			});
+		},
+	);
 
 	it.each([null, false, 42, "invalid", []])("reports malformed model entries: %j", (entry) => {
 		const storage = new InMemorySettingsStorage();
@@ -177,16 +201,47 @@ describe("compaction model overrides", () => {
 
 	it("accepts zero in ordinary settings and model overrides", () => {
 		const manager = SettingsManager.inMemory({
-			compaction: { reserveTokens: 0, keepRecentTokens: 0 },
+			compaction: { reserveTokens: 0, keepRecentTokens: 0, summaryMaxTokens: 0 },
 		});
-		expect(manager.getCompactionSettings(model)).toEqual({ enabled: true, reserveTokens: 0, keepRecentTokens: 0 });
+		expect(manager.getCompactionSettings(model)).toEqual({
+			enabled: true,
+			reserveTokens: 0,
+			keepRecentTokens: 0,
+			summaryMaxTokens: 0,
+		});
 		manager.applyOverrides({
 			compaction: {
 				reserveTokens: 1000,
 				keepRecentTokens: 1000,
+				summaryMaxTokens: 1000,
 				modelOverrides: { [modelKey]: { reserveTokens: 0, keepRecentTokens: 0 } },
 			},
 		});
-		expect(manager.getCompactionSettings(model)).toEqual({ enabled: true, reserveTokens: 0, keepRecentTokens: 0 });
+		expect(manager.getCompactionSettings(model)).toEqual({
+			enabled: true,
+			reserveTokens: 0,
+			keepRecentTokens: 0,
+			summaryMaxTokens: 1000,
+		});
+	});
+
+	it.each([null, -1, 1.5, "400000", true, {}, [], Number.MAX_SAFE_INTEGER + 1])(
+		"reports invalid branch summary output caps: %j",
+		(value) => {
+			const storage = new InMemorySettingsStorage();
+			storage.withLock("global", () => JSON.stringify({ branchSummary: { summaryMaxTokens: value } }));
+			const manager = SettingsManager.fromStorage(storage);
+			expect(() => manager.getBranchSummarySettings()).toThrow(
+				`Invalid branchSummary.summaryMaxTokens setting: ${String(value)}. Expected a non-negative safe integer.`,
+			);
+		},
+	);
+
+	it.each([Number.NaN, Infinity, -Infinity])("reports non-finite branch summary output caps: %s", (value) => {
+		const manager = SettingsManager.inMemory();
+		manager.applyOverrides({ branchSummary: { summaryMaxTokens: value } });
+		expect(() => manager.getBranchSummarySettings()).toThrow(
+			`Invalid branchSummary.summaryMaxTokens setting: ${String(value)}. Expected a non-negative safe integer.`,
+		);
 	});
 });

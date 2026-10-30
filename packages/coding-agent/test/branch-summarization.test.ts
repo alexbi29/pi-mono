@@ -7,7 +7,7 @@ import {
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
-import { generateBranchSummary, SUMMARIZATION_MAX_TOKENS } from "../src/core/compaction/index.ts";
+import { generateBranchSummary } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -84,6 +84,47 @@ describe("branch summarization", () => {
 		expect(requestOptions?.toolChoice).toBeUndefined();
 	});
 
+	it("uses the configured branch summary output cap", async () => {
+		let requestOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (_model, _context, options) => {
+			requestOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		await generateBranchSummary(entries, {
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+			summaryMaxTokens: 4096,
+		});
+
+		expect(requestOptions?.maxTokens).toBe(4096);
+	});
+
+	it("defaults the branch summary output cap to the model output limit", async () => {
+		let requestOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (_model, _context, options) => {
+			requestOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() =>
+				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
+			);
+			return stream;
+		};
+
+		await generateBranchSummary(entries, {
+			model,
+			signal: new AbortController().signal,
+			streamFn,
+		});
+
+		expect(requestOptions?.maxTokens).toBe(model.maxTokens);
+	});
+
 	it("rejects tool calls from branch summaries", async () => {
 		const streamFn: StreamFn = () => {
 			const stream = createAssistantMessageEventStream();
@@ -128,7 +169,7 @@ describe("branch summarization", () => {
 		});
 
 		expect(result.error).toBe(
-			`Branch summarization failed: generation hit the token cap (${SUMMARIZATION_MAX_TOKENS.toLocaleString()} tokens) and the summary is incomplete`,
+			`Branch summarization failed: generation hit the token cap (${model.maxTokens.toLocaleString()} tokens) and the summary is incomplete`,
 		);
 	});
 });

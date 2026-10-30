@@ -122,6 +122,8 @@ export interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
+	/** Optional output cap for compaction and turn-prefix summaries. Omitted uses the model's output limit. */
+	summaryMaxTokens?: number;
 }
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
@@ -579,8 +581,13 @@ const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation mes
 
 ${UPDATE_SUMMARIZATION_INSTRUCTIONS}`;
 
-/** Output budget requested for compaction, turn-prefix, and branch summaries. */
-export const SUMMARIZATION_MAX_TOKENS = 16384;
+/**
+ * Resolve the requested output budget for a summary. An omitted setting uses the model's
+ * output limit; the context clamp still applies so input and output fit the window.
+ */
+export function resolveSummarizationMaxTokens(model: Model<any>, requested: number | undefined): number {
+	return requested ?? model.maxTokens;
+}
 
 /**
  * Returns an error message when a summarization response cannot safely be persisted.
@@ -666,6 +673,7 @@ export async function generateSummary(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	summaryMaxTokens?: number,
 ): Promise<string> {
 	return (
 		await generateSummaryWithUsage(
@@ -683,6 +691,7 @@ export async function generateSummary(
 			retry,
 			callbacks,
 			sessionId,
+			summaryMaxTokens,
 		)
 	).text;
 }
@@ -718,6 +727,7 @@ export async function generateSummaryWithUsage(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
+	summaryMaxTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	// Use update prompt if we have a previous summary, otherwise initial prompt
 	let basePrompt = previousSummary ? UPDATE_SUMMARIZATION_PROMPT : SUMMARIZATION_PROMPT;
@@ -738,11 +748,12 @@ export async function generateSummaryWithUsage(
 	promptText += basePrompt;
 
 	const summarizationContext = buildSummarizationContext(promptText);
+	const desiredMaxTokens = resolveSummarizationMaxTokens(model, summaryMaxTokens);
 	const completionOptions = {
 		...createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
-		maxTokens: SUMMARIZATION_MAX_TOKENS,
+		maxTokens: desiredMaxTokens,
 	};
-	const tokenCap = clampMaxTokensToContext(model, summarizationContext, SUMMARIZATION_MAX_TOKENS);
+	const tokenCap = clampMaxTokensToContext(model, summarizationContext, desiredMaxTokens);
 
 	const response = await completeSummarization(
 		model,
@@ -985,6 +996,7 @@ export async function compact(
 		tokensBefore,
 		previousSummary,
 		fileOps,
+		settings,
 	} = preparation;
 
 	// Generate summaries and merge into one
@@ -1010,6 +1022,7 @@ export async function compact(
 				retry,
 				callbacks,
 				sessionId,
+				settings.summaryMaxTokens,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -1027,6 +1040,7 @@ export async function compact(
 			callbacks,
 			sessionId,
 			customInstructions,
+			settings.summaryMaxTokens,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1048,6 +1062,7 @@ export async function compact(
 			retry,
 			callbacks,
 			sessionId,
+			settings.summaryMaxTokens,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -1086,6 +1101,7 @@ async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	customInstructions?: string,
+	summaryMaxTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
@@ -1095,11 +1111,12 @@ async function generateTurnPrefixSummary(
 	}
 
 	const summarizationContext = buildSummarizationContext(promptText);
+	const desiredMaxTokens = resolveSummarizationMaxTokens(model, summaryMaxTokens);
 	const completionOptions = {
 		...createSummarizationOptions(model, apiKey, headers, env, signal, thinkingLevel, sessionId),
-		maxTokens: SUMMARIZATION_MAX_TOKENS,
+		maxTokens: desiredMaxTokens,
 	};
-	const tokenCap = clampMaxTokensToContext(model, summarizationContext, SUMMARIZATION_MAX_TOKENS);
+	const tokenCap = clampMaxTokensToContext(model, summarizationContext, desiredMaxTokens);
 	const response = await completeSummarization(
 		model,
 		summarizationContext,

@@ -879,23 +879,47 @@ export class SettingsManager {
 		return this.getCompactionTokenSetting("keepRecentTokens", model);
 	}
 
+	/** Optional output cap for compaction summaries; omitted means use the model's output limit. */
+	getCompactionSummaryMaxTokens(): number | undefined {
+		const value = this.settings.compaction?.summaryMaxTokens;
+		if (value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) {
+			throw new Error(
+				`Invalid compaction.summaryMaxTokens setting: ${String(value)}. Expected a non-negative safe integer.`,
+			);
+		}
+		return value;
+	}
+
 	/** Resolve each token setting through model override, ordinary setting, then built-in default. */
 	getCompactionSettings(model?: Pick<Model<string>, "provider" | "id">): {
 		enabled: boolean;
 		reserveTokens: number;
 		keepRecentTokens: number;
+		summaryMaxTokens?: number;
 	} {
+		const summaryMaxTokens = this.getCompactionSummaryMaxTokens();
 		return {
 			enabled: this.getCompactionEnabled(),
 			reserveTokens: this.getCompactionReserveTokens(model),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(model),
+			...(summaryMaxTokens === undefined ? {} : { summaryMaxTokens }),
 		};
 	}
 
-	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {
+	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean; summaryMaxTokens?: number } {
+		const summaryMaxTokens = this.settings.branchSummary?.summaryMaxTokens;
+		if (
+			summaryMaxTokens !== undefined &&
+			(typeof summaryMaxTokens !== "number" || !Number.isSafeInteger(summaryMaxTokens) || summaryMaxTokens < 0)
+		) {
+			throw new Error(
+				`Invalid branchSummary.summaryMaxTokens setting: ${String(summaryMaxTokens)}. Expected a non-negative safe integer.`,
+			);
+		}
 		return {
 			reserveTokens: this.settings.branchSummary?.reserveTokens ?? SETTINGS_DEFAULTS.branchSummary.reserveTokens,
 			skipPrompt: this.settings.branchSummary?.skipPrompt ?? SETTINGS_DEFAULTS.branchSummary.skipPrompt,
+			...(summaryMaxTokens === undefined ? {} : { summaryMaxTokens }),
 		};
 	}
 
