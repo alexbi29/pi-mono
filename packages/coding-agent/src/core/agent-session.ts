@@ -417,6 +417,8 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	/** Memo for getContextUsage(); keyed on leaf entry plus limits model. */
+	private _contextUsageCache: { key: string; usage: ContextUsage | undefined } | undefined;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -4366,10 +4368,25 @@ export class AgentSession {
 		};
 	}
 
+	/**
+	 * Context usage of the current context, memoized on the leaf entry and the model it was
+	 * measured against. Entries are append-only, so an unchanged leaf means an unchanged
+	 * projection; measuring walks the projection and the branch, which render paths call often.
+	 */
 	getContextUsage(): ContextUsage | undefined {
 		const model = this._limitsModel();
 		if (!model) return undefined;
 
+		const cacheKey = `${model.provider}/${model.id}:${model.contextWindow ?? 0}@${this.sessionManager.getLeafId() ?? ""}`;
+		if (this._contextUsageCache?.key === cacheKey) return this._contextUsageCache.usage;
+
+		const usage = this._measureContextUsage(model);
+		this._contextUsageCache = { key: cacheKey, usage };
+		return usage;
+	}
+
+	/** Measure context usage against the current projection. Prefer getContextUsage(), which caches. */
+	private _measureContextUsage(model: Model<any>): ContextUsage | undefined {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
