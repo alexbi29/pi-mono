@@ -179,8 +179,15 @@ the stale one (upstream, without the stats features) wins in some shells - remov
 - **Non-interactive SSH hides PATH setup**: `ssh host 'node -v'` does not source `.bashrc`,
   so nvm/mise-based tools report "command not found" even though they exist and work in
   interactive shells. Probe with `bash -ic "which pi; pi --version"`.
-- **~/.pi is live-synced between machines**: settings (incl. `showTurnUsage`) propagate
-  automatically; package installs (`pi install`) do not - run them per machine.
+- **`~/.pi/agent` config is per machine**: `models.json` is not synced and holds box-specific
+  provider lists, so a model edit must be repeated on every box and confirmed there with
+  `pi --list-models` (the output-limit column shows the composed `maxTokens`; an omitted
+  `maxTokens` defaults to 16384). `settings.json` carries machine-local state
+  (`defaultProvider`, `defaultModel`, `lastChangelogVersion`, `extensionChangelogVersions`,
+  `enabledModels`), so files differ across boxes even where a value was chosen once. As of
+  2026-10-29 no sync process was found on the Mac, so treat `models.json`, `pi install`, and
+  `pi update --extensions` as per-machine work. A running pi reads `models.json` at start -
+  restart or `/reload` after editing it.
 - **A running pi keeps its old code**: restart the session after `pi update`.
 - Never run `pip`-adjacent registry tools against `@earendil-works/*` for this fork; the
   internal 1.4.x versions only exist inside our tarballs.
