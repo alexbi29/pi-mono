@@ -6,17 +6,16 @@
  * warning is due and what it says; the session layer appends the result.
  */
 
+import { contextFigureFormat } from "./messages.ts";
+
 /** customType of the appended entry. Also the marker named by the `context_usage` prompt rule. */
 export const CONTEXT_WARNING_CUSTOM_TYPE = "context-warning";
 
 /** Usage percentage at or above which the first warning is due. */
-export const CONTEXT_WARNING_START_PERCENT = 90;
+const WARNING_START_PERCENT = 90;
 
 /** Percentage points between warnings, so one session gets a few at most. */
-export const CONTEXT_WARNING_STEP_PERCENT = 5;
-
-/** Grouping for the token counts in the warning. Fixed locale: the text is model-facing and tested. */
-const tokenCountFormat = new Intl.NumberFormat("en-US");
+const WARNING_STEP_PERCENT = 5;
 
 /** Metadata stored with a warning entry, so later turns can see which band was last warned. */
 export interface ContextWarningDetails {
@@ -31,17 +30,19 @@ export interface ContextWarningDetails {
 }
 
 /**
- * Band at which the first warning is due. Normally {@link CONTEXT_WARNING_START_PERCENT}, but a model
- * that compacts earlier must be warned before it compacts, not after.
+ * Band at which the first warning is due. Normally 90, but a model that compacts earlier must be warned
+ * before it compacts, not after: the band drops to the highest 5-point band at least one step below the
+ * compaction point, never below one step.
  */
 export function firstContextWarningBand(compactionPointPercent: number | undefined): number {
-	if (compactionPointPercent === undefined || compactionPointPercent >= CONTEXT_WARNING_START_PERCENT) {
-		return CONTEXT_WARNING_START_PERCENT;
+	// A compaction point of exactly 90 must still warn: compaction fires above it, so the band has to sit
+	// below, not on top of it.
+	if (compactionPointPercent === undefined || compactionPointPercent > WARNING_START_PERCENT) {
+		return WARNING_START_PERCENT;
 	}
 	const ahead = Math.max(
-		CONTEXT_WARNING_STEP_PERCENT,
-		Math.floor((compactionPointPercent - CONTEXT_WARNING_STEP_PERCENT) / CONTEXT_WARNING_STEP_PERCENT) *
-			CONTEXT_WARNING_STEP_PERCENT,
+		WARNING_STEP_PERCENT,
+		Math.floor((compactionPointPercent - WARNING_STEP_PERCENT) / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT,
 	);
 	return ahead;
 }
@@ -58,10 +59,7 @@ export function nextContextWarningBand(
 ): number | undefined {
 	const startBand = firstContextWarningBand(compactionPointPercent);
 	if (percent < startBand) return undefined;
-	const band = Math.min(
-		Math.max(Math.floor(percent / CONTEXT_WARNING_STEP_PERCENT) * CONTEXT_WARNING_STEP_PERCENT, startBand),
-		100,
-	);
+	const band = Math.min(Math.max(Math.floor(percent / WARNING_STEP_PERCENT) * WARNING_STEP_PERCENT, startBand), 100);
 	return band > (lastWarnedBand ?? 0) ? band : undefined;
 }
 
@@ -73,12 +71,13 @@ export function formatContextWarning(
 	usage: { tokens: number; contextWindow: number; percent: number },
 	compactionPointPercent: number | undefined,
 ): string {
-	const measured = `[context] ${tokenCountFormat.format(usage.tokens)} of ${tokenCountFormat.format(
+	const measured = `[context] ${contextFigureFormat.format(usage.tokens)} of ${contextFigureFormat.format(
 		usage.contextWindow,
 	)} tokens used (${Math.round(usage.percent)}%).`;
+	// Rounded up: promising pressure earlier than pi will act is the failure this feature exists to stop.
 	const compactsAt =
 		compactionPointPercent === undefined || compactionPointPercent <= 0
 			? ""
-			: ` pi compacts automatically at ${Math.round(compactionPointPercent)}%.`;
+			: ` pi compacts automatically at ${Math.ceil(compactionPointPercent)}%.`;
 	return `${measured}${compactsAt} Keep working, but don't start large edits.`;
 }

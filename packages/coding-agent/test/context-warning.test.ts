@@ -1,29 +1,30 @@
 import { describe, expect, it } from "vitest";
-import {
-	CONTEXT_WARNING_START_PERCENT,
-	CONTEXT_WARNING_STEP_PERCENT,
-	firstContextWarningBand,
-	formatContextWarning,
-	nextContextWarningBand,
-} from "../src/core/context-warning.ts";
+import { DEFAULT_COMPACTION_SETTINGS, shouldCompact } from "../src/core/compaction/index.ts";
+import { firstContextWarningBand, formatContextWarning, nextContextWarningBand } from "../src/core/context-warning.ts";
 
 describe("firstContextWarningBand", () => {
-	it("starts at the configured percentage when compaction happens later", () => {
-		expect(firstContextWarningBand(undefined)).toBe(CONTEXT_WARNING_START_PERCENT);
-		expect(firstContextWarningBand(98.4)).toBe(CONTEXT_WARNING_START_PERCENT);
-		expect(firstContextWarningBand(CONTEXT_WARNING_START_PERCENT)).toBe(CONTEXT_WARNING_START_PERCENT);
+	it("starts at 90 percent when compaction happens later", () => {
+		expect(firstContextWarningBand(undefined)).toBe(90);
+		expect(firstContextWarningBand(98.4)).toBe(90);
+		expect(firstContextWarningBand(93.75)).toBe(90);
 	});
 
-	it("starts earlier when the model compacts before the default point", () => {
-		// A 1M-token window with the default reserve compacts at 98.4%, so 90 comes first. A small
-		// reserve on a small window can compact at 88%, and a warning after that is useless.
+	it("starts earlier when pi compacts below 90 percent", () => {
+		// The compaction point falls below 90 only when reserveTokens is more than 10 percent of the
+		// window: a 1M window reserving 400k compacts at 60, and a warning after that is useless.
 		expect(firstContextWarningBand(88)).toBe(80);
 		expect(firstContextWarningBand(60)).toBe(55);
 	});
 
+	it("starts below a compaction point of exactly 90 percent", () => {
+		// Compaction fires above the point, so a band sitting on it could never be reached. A window
+		// reserving exactly a tenth of itself lands here: 200000 tokens, 20000 reserve.
+		expect(firstContextWarningBand(90)).toBe(85);
+	});
+
 	it("never starts below one step", () => {
-		expect(firstContextWarningBand(6)).toBe(CONTEXT_WARNING_STEP_PERCENT);
-		expect(firstContextWarningBand(0)).toBe(CONTEXT_WARNING_STEP_PERCENT);
+		expect(firstContextWarningBand(6)).toBe(5);
+		expect(firstContextWarningBand(0)).toBe(5);
 	});
 });
 
@@ -32,6 +33,12 @@ describe("nextContextWarningBand", () => {
 		expect(nextContextWarningBand(0, undefined, undefined)).toBeUndefined();
 		expect(nextContextWarningBand(89.9, undefined, undefined)).toBeUndefined();
 		expect(nextContextWarningBand(16.5, undefined, undefined)).toBeUndefined();
+	});
+
+	it("warns once between the first band and the compaction point", () => {
+		// A default 262144-token window with the default reserve compacts at 93.75, so the 90 band is
+		// the only one that can fire before pi frees context.
+		expect(nextContextWarningBand(90.2, undefined, 93.75)).toBe(90);
 	});
 
 	it("reports a band once and then waits for the next one", () => {
@@ -68,6 +75,20 @@ describe("formatContextWarning", () => {
 		);
 		expect(formatContextWarning(usage, 0)).toBe(
 			"[context] 238,412 of 262,144 tokens used (91%). Keep working, but don't start large edits.",
+		);
+	});
+
+	it("prints a compaction point that is never earlier than shouldCompact acts", () => {
+		const { reserveTokens } = DEFAULT_COMPACTION_SETTINGS;
+		const contextWindow = 262_144;
+		const atThreshold = contextWindow - reserveTokens;
+		const compactionPoint = ((atThreshold + 1) / contextWindow) * 100;
+
+		// Rounding is upward, so the printed point cannot promise pressure before pi really acts.
+		expect(shouldCompact(atThreshold, contextWindow, DEFAULT_COMPACTION_SETTINGS)).toBe(false);
+		expect(shouldCompact(atThreshold + 1, contextWindow, DEFAULT_COMPACTION_SETTINGS)).toBe(true);
+		expect(formatContextWarning({ ...usage, percent: 90.5 }, compactionPoint)).toContain(
+			"pi compacts automatically at 94%.",
 		);
 	});
 });

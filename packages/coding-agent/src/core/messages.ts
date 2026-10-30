@@ -127,8 +127,8 @@ export function createCompactionSummaryMessage(
 	};
 }
 
-/** Grouping for the figures in the post-compaction note. Fixed locale: the text is model-facing and tested. */
-const contextNoteFormat = new Intl.NumberFormat("en-US");
+/** Grouping for token counts in model-facing text. Fixed locale: these strings are documented and tested. */
+export const contextFigureFormat = new Intl.NumberFormat("en-US");
 
 /**
  * Line that follows a compaction summary. Compaction invalidates any usage figure the model saw
@@ -139,10 +139,10 @@ export function compactionContextNote(message: CompactionSummaryMessage): string
 	const { tokensAfter, contextWindow } = message;
 	if (tokensAfter === undefined) return "";
 	if (contextWindow === undefined || contextWindow <= 0) {
-		return `\n\nContext after compaction: ~${contextNoteFormat.format(tokensAfter)} tokens.`;
+		return `\n\nContext after compaction: ~${contextFigureFormat.format(tokensAfter)} tokens.`;
 	}
 	const percent = Math.round((tokensAfter / contextWindow) * 100);
-	return `\n\nContext after compaction: ~${contextNoteFormat.format(tokensAfter)} of ${contextNoteFormat.format(
+	return `\n\nContext after compaction: ~${contextFigureFormat.format(tokensAfter)} of ${contextFigureFormat.format(
 		contextWindow,
 	)} tokens (${percent}%).`;
 }
