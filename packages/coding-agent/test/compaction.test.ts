@@ -13,8 +13,12 @@ import {
 	findCutPoint,
 	getLastAssistantUsage,
 	prepareCompaction,
+	serializeConversation,
 	shouldCompact,
+	withoutContextWarnings,
 } from "../src/core/compaction/index.ts";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../src/core/context-warning.ts";
+import { convertToLlm, createCustomMessage } from "../src/core/messages.ts";
 import {
 	buildSessionContext,
 	type CompactionEntry,
@@ -652,4 +656,25 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 		console.log("Original messages:", loaded.messages.length);
 		console.log("After compaction:", reloaded.messages.length);
 	}, 60000);
+});
+
+describe("summarization input", () => {
+	it("keeps [context] warnings away from the summarizer", () => {
+		const warning = createCustomMessage(
+			CONTEXT_WARNING_CUSTOM_TYPE,
+			"[context] 93% of 262,144 tokens used. pi compacts automatically at 94%. Keep working, but don't start large edits.",
+			true,
+			{ band: 90, percent: 93, tokens: 243_763, contextWindow: 262_144 },
+			new Date().toISOString(),
+		);
+		const messages: AgentMessage[] = [{ role: "user", content: "start", timestamp: 1 } as AgentMessage, warning];
+
+		// A normal request does show the warning to the model.
+		expect(serializeConversation(convertToLlm(messages))).toContain("[context]");
+
+		// A summary replaces the context the warning measured, so it must not carry the figure on.
+		const summaryInput = serializeConversation(convertToLlm(withoutContextWarnings(messages)));
+		expect(summaryInput).not.toContain("[context]");
+		expect(summaryInput).not.toContain("93%");
+	});
 });

@@ -8,6 +8,7 @@
 - `pi.exec()` accepts a `maxBuffer` option that limits stdout and stderr combined, and its result has a `truncated` field that is true when output exceeded the limit ([#11360](https://github.com/earendil-works/pi/issues/11360))
 - New `showTurnUsage` setting: an elapsed turn timer in front of the "Working" indicator while the agent runs, and a dim per-turn line (`Took 1m 16s • 6:45 PM • 42.1 tok/s • out/in/cache/total`) appended to the transcript after each completed agent run.
 - The footer shows the live streaming output rate (`~82 tok/s`) while the assistant is generating.
+- Pi now measures context usage for the model. When usage crosses 90% of the context window, and again at each later 5-point band, a `[context]` line is appended before the next assistant response (`[context] 91% of 262,144 tokens used. pi compacts automatically at 94%. Keep working, but don't start large edits.`), and the compaction wrapper states the size of the context a compaction produced (`Context after compaction: ~35,066 of 262,144 tokens (13%).`). The system prompt tells the model that usage is measured only by pi and that it must never estimate it. Nothing is reported while auto-compaction is off, since the model could not act on the number.
 - Device-code login (for example GitHub Copilot) now opens the verification page and copies the code when you press Enter. Providers can turn either action off with `openBrowserOnConfirm: false` or `copyCodeOnConfirm: false` ([#9282](https://github.com/earendil-works/pi/issues/9282), [#9301](https://github.com/earendil-works/pi/pull/9301))
 
 ### Changed
@@ -19,6 +20,8 @@
 - Compaction summaries now show the estimated token count after compaction and keep the `[compaction]` label on the same line as the summary text.
 - Added `compaction.summaryMaxTokens` and `branchSummary.summaryMaxTokens` to cap summary output; omitted values use the model's output limit. A length-stop failure reports the effective token cap.
 - The footer's live output rate now shows the average since the current assistant response started instead of a noisy instantaneous/EWMA rate.
+- Summarization input no longer contains `[context]` warning lines, and every summarization prompt forbids carrying context-usage figures into a summary, so a figure that a compaction invalidated cannot survive into the next context.
+- Context usage measurement is now cached per session leaf, so the footer and the context warning no longer rebuild the session projection on every call.
 
 ### Fixed
 

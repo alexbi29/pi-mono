@@ -44,6 +44,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
+	withoutContextWarnings,
 } from "./utils.ts";
 
 // ============================================================================
@@ -539,7 +540,8 @@ Use this EXACT format:
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.
+Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
 
 const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
 - PRESERVE all existing information from the previous summary
@@ -548,6 +550,7 @@ const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summar
 - UPDATE "Next Steps" based on what was accomplished
 - PRESERVE exact file paths, function names, and error messages
 - If something is no longer relevant, you may remove it
+- NEVER carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it
 
 Use this EXACT format:
 
@@ -758,7 +761,7 @@ export async function generateSummaryWithUsage(
 
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
+	const llmMessages = convertToLlm(withoutContextWarnings(currentMessages));
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build the prompt with conversation wrapped in tags
@@ -985,7 +988,8 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 ## Context Needed to Continue
 - [Information from these messages needed to understand the later work]
 
-Only summarize information explicitly present above. Do not infer or recreate later messages.`;
+Only summarize information explicitly present above. Do not infer or recreate later messages.
+Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
 
 /**
  * Generate summaries for compaction using prepared data.
@@ -1124,7 +1128,7 @@ async function generateTurnPrefixSummary(
 	customInstructions?: string,
 	summaryMaxTokens?: number,
 ): Promise<{ text: string; usage: Usage }> {
-	const llmMessages = convertToLlm(messages);
+	const llmMessages = convertToLlm(withoutContextWarnings(messages));
 	const conversationText = serializeConversation(llmMessages);
 	let promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	if (customInstructions) {

@@ -42,6 +42,28 @@ A provider context-overflow error or an early final `stopReason: "length"` can s
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
+### Context Usage Warning
+
+The model cannot measure its own context. Usage arrives in provider responses, which pi consumes and never resends, so a model that wants to know how full it is has to guess. A guessed figure that lands in the transcript keeps being reused after compaction, because compaction keeps part of that transcript.
+
+When auto-compaction can act (`compaction.enabled`, default), pi appends a line to the session before the next assistant request:
+
+```text
+[context] 91% of 262,144 tokens used. pi compacts automatically at 94%. Keep working, but don't start large edits.
+```
+
+The rules:
+
+- One warning per 5-point band, the first at 90% usage. If the compaction point is less than two bands away, the first band moves down by 5 points, so a small reserve still warns before it is too late. Bands are constants in [`context-warning.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/context-warning.ts), not settings.
+- Percentages in the text are rounded to whole percent; the band comparison uses the unrounded value.
+- The line is appended and never edited. A number pi revised later would be indistinguishable from a measurement, and the provider request must stay append-only to keep prefix caching.
+- Any later compaction removes the warning from model context, even though the entry stays in the session file and the TUI. The band counter ignores dropped warnings, so a context that fills up again is warned about again.
+- After compaction, the summary wrapper states the size of the context pi produced: `Context after compaction: ~35,066 of 262,144 tokens (13%).` Entries written before pi persisted that estimate state nothing rather than guess.
+- `[context]` lines are removed from summarizer input, and every summarization prompt forbids carrying context figures into a summary.
+- When auto-compaction is off, pi emits no warning, because a number the model cannot act on only makes it stop early. The system prompt then says pi does not report context usage.
+
+The system prompt carries the matching rule in a `context_usage` section: usage is measured only by pi, the model must never estimate it, and the newest `[context]` line is the only evidence of context pressure.
+
 ### How It Works
 
 1. **Find cut point**: Walk backwards through the finalized session projection, accumulating token estimates until `keepRecentTokens` (default 20k, configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`) is reached
@@ -153,6 +175,7 @@ interface CompactionEntry<T = unknown> {
   firstKeptEntryId: string;
   tokensBefore: number;
   tokensAfter?: number; // estimated context tokens after compaction
+  contextWindow?: number; // window that estimate was taken against
   usage?: Usage;       // LLM usage that generated the summary
   fromHook?: boolean;  // true if provided by extension (legacy field name)
   details?: T;         // implementation-specific data

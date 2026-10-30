@@ -32,6 +32,7 @@ import {
 	formatFileOperations,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
+	withoutContextWarnings,
 } from "./utils.ts";
 
 // ============================================================================
@@ -299,7 +300,8 @@ Use this EXACT format:
 ## Next Steps
 1. [What should happen next to continue this work]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.
+Never carry over context-usage figures or lines beginning with "[context]": they measure a context that stops existing the moment this summary replaces it.`;
 
 /**
  * Generate a summary of abandoned branch entries.
@@ -339,7 +341,7 @@ export async function generateBranchSummary(
 
 	// Transform to LLM-compatible messages, then serialize to text
 	// Serialization prevents the model from treating it as a conversation to continue
-	const llmMessages = convertToLlm(messages);
+	const llmMessages = convertToLlm(withoutContextWarnings(messages));
 	const conversationText = serializeConversation(llmMessages);
 
 	// Build prompt

@@ -4,6 +4,7 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { contentText, type Message } from "@earendil-works/pi-ai";
+import { CONTEXT_WARNING_CUSTOM_TYPE } from "../context-warning.ts";
 
 // ============================================================================
 // File Operation Tracking
@@ -117,6 +118,17 @@ function truncateForSummary(text: string, maxChars: number): string {
  * summarization request larger than the context it summarizes. Visible text,
  * tool calls, and tool results record what happened.
  */
+/**
+ * Drop `[context]` warnings from messages handed to a summarizer. A warning measures the context the
+ * summary is about to replace; carried over, it reads as a live measurement and the model plans around
+ * a full window that no longer exists.
+ */
+export function withoutContextWarnings(messages: AgentMessage[]): AgentMessage[] {
+	return messages.filter(
+		(message) => !(message.role === "custom" && message.customType === CONTEXT_WARNING_CUSTOM_TYPE),
+	);
+}
+
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
 
