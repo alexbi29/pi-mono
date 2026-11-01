@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fork packaging helper: computes the production dependency closure of the
-// five bundled workspace packages (pi-agent-core, pi-ai, pi-codemode, pi-mcp,
-// pi-tui) and stages it for the release tarball.
+// six bundled workspace packages (pi-agent-core, pi-ai, pi-codemode, pi-mcp,
+// pi-schema, pi-tui) and stages it for the release tarball.
 //
 // npm does not install transitive dependencies of bundledDependencies, yet
 // the subagent runner (pi-subagents extension) and other SDK consumers load
@@ -16,18 +16,19 @@
 //   node scripts/fork-pack-closure.mjs --stage D  copy the closure into
 //       D/node_modules and rewrite D/package.json bundledDependencies
 //
-// The five workspace packages themselves are staged by fork-update.sh with
+// The six workspace packages themselves are staged by fork-update.sh with
 // their built dist/ and are always listed in bundledDependencies.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-const WORKSPACES = ["agent", "ai", "codemode", "mcp", "tui"];
+const WORKSPACES = ["agent", "ai", "codemode", "mcp", "schema", "tui"];
 const WORKSPACE_PACKAGE_NAMES = [
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-codemode",
 	"@earendil-works/pi-mcp",
+	"@earendil-works/pi-schema",
 	"@earendil-works/pi-tui",
 ];
 

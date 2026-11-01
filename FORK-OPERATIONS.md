@@ -31,15 +31,15 @@ is the entry point.
 ## Runner dependencies
 
 The subagent runner spawned by the `pi-subagents` extension loads the host pi packages
-unbundled (`pi-ai`, `pi-tui`, `pi-agent-core`, `typebox`) instead of the self-contained
+unbundled (`pi-ai`, `pi-schema`, `pi-tui`, `pi-agent-core`, `typebox`) instead of the self-contained
 CLI bundle. npm does not install transitive dependencies of bundled packages, so
 anything those unbundled import graphs need at runtime must ship inside the tarball:
 provider SDKs load through dynamic `.lazy.js` imports, but the first model call
-resolves them, so the full production dependency closure of the five bundled
+resolves them, so the full production dependency closure of the six bundled
 workspaces is staged instead of a hand-picked list.
 `scripts/fork-pack-closure.mjs` computes it (Node-style resolution, ~90 packages,
 ~100 MB unpacked) and rewrites the staged `bundledDependencies`;
-`packages/coding-agent/package.json` keeps the upstream list (the five workspaces
+`packages/coding-agent/package.json` keeps the upstream list plus `pi-schema` (the six workspaces
 only). New dependencies of the bundled workspaces need no extra steps; the closure
 script fails loudly if a member cannot be resolved or if
 `@earendil-works/pi-telemetry` reappears as a dependency.
@@ -52,13 +52,15 @@ Fork-only source files (keep patch surface small):
 - `packages/coding-agent/package.json` - `bundledDependencies` (fork metadata, see below)
 - `packages/ai/src/telemetry-contract.ts` - vendored inert telemetry contract (see above)
 - `scripts/fork-pack-closure.mjs` - runner dependency closure staging (see below)
+- `scripts/package-workspaces.mjs` - skips `test/` so chord fixture packages (non-private
+  `1.0.0`) do not fail `sync-versions.js` lockstep validation; drop once upstream fixes it
 
 ## Distribution
 
 No npm account, no npm registry publishing. Every fork release:
 
-- builds the coding-agent bundle plus the five workspace packages
-  (`pi-agent-core`, `pi-ai`, `pi-codemode`, `pi-mcp`, `pi-tui`) and packs a self-contained
+- builds the coding-agent bundle plus the six workspace packages
+  (`pi-agent-core`, `pi-ai`, `pi-codemode`, `pi-mcp`, `pi-schema`, `pi-tui`) and packs a self-contained
   tarball with them bundled (`bundledDependencies`) - the bundle itself is self-contained at
   runtime, the bundling only satisfies npm metadata because the internal
   `@earendil-works/*@1.4.x` versions do not exist on the registry
@@ -184,10 +186,16 @@ the stale one (upstream, without the stats features) wins in some shells - remov
   `pi --list-models` (the output-limit column shows the composed `maxTokens`; an omitted
   `maxTokens` defaults to 16384). `settings.json` carries machine-local state
   (`defaultProvider`, `defaultModel`, `lastChangelogVersion`, `extensionChangelogVersions`,
-  `enabledModels`), so files differ across boxes even where a value was chosen once. As of
-  2026-10-29 no sync process was found on the Mac, so treat `models.json`, `pi install`, and
-  `pi update --extensions` as per-machine work. A running pi reads `models.json` at start -
-  restart or `/reload` after editing it.
+  `enabledModels`), so files differ across boxes even where a value was chosen once. Treat
+  `models.json`, `settings.json`, `pi install`, and `pi update --extensions` as per-machine work.
+  Box-independent files (`keybindings.json`, `APPEND_SYSTEM.md`,
+  `extensions/subagent/config.json`) are edited on the Mac and pushed with
+  `bash fork-sync-config.sh` (`--dry-run` to preview). Like `fork-update.sh`, it lives only on
+  the Mac (excluded via `.git/info/exclude`); add a file to its `SHARED` list when it becomes
+  shared. The script also pushes this repo's `.pi/extensions/monitor.ts` to the remotes as a
+  global extension; the Mac must not get a global copy, because inside pi-mono it would clash
+  with the project one ("Tool \"monitor\" conflicts with ..."). A running pi reads `models.json`
+  at start - restart or `/reload` after editing it.
 - **A running pi keeps its old code**: restart the session after `pi update`.
 - Never run `pip`-adjacent registry tools against `@earendil-works/*` for this fork; the
   internal 1.4.x versions only exist inside our tarballs.
