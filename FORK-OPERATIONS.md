@@ -47,7 +47,8 @@ script fails loudly if a member cannot be resolved or if
 Fork-only source files (keep patch surface small):
 
 - `packages/coding-agent/src/utils/version-check.ts` - release source + tag/tarball parsing
-- `packages/coding-agent/src/package-manager-cli.ts` - self-update installSpec (tarball URL)
+- `packages/coding-agent/src/package-manager-cli.ts` - self-update installSpec (tarball URL); no
+  post-update hint to migrate to the pi.dev installer (it would install upstream pi)
 - `packages/coding-agent/src/config.ts` - `{installSpec}` in a configured self-update command is
   the plan's tarball URL (one line in `makeConfiguredSelfUpdateCommand`)
 - `packages/coding-agent/test/version-check.test.ts` - tests for the above
