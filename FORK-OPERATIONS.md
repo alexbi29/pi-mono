@@ -48,6 +48,8 @@ Fork-only source files (keep patch surface small):
 
 - `packages/coding-agent/src/utils/version-check.ts` - release source + tag/tarball parsing
 - `packages/coding-agent/src/package-manager-cli.ts` - self-update installSpec (tarball URL)
+- `packages/coding-agent/src/config.ts` - `{installSpec}` in a configured self-update command is
+  the plan's tarball URL (one line in `makeConfiguredSelfUpdateCommand`)
 - `packages/coding-agent/test/version-check.test.ts` - tests for the above
 - `packages/coding-agent/package.json` - `bundledDependencies` (fork metadata, see below)
 - `packages/ai/src/telemetry-contract.ts` - vendored inert telemetry contract (see above)
@@ -148,7 +150,10 @@ fork's behavior diverges from upstream in places upstream's own tests do not
 cover. `packages/env`'s suites drive the Rust `pi-env` daemon (CI builds it), so
 the script builds it when `cargo` is available and otherwise stops with
 instructions; `PI_SKIP_TESTS=1` skips the suite for an urgent release (log:
-`/tmp/pi-fork-tests.log`).
+`/tmp/pi-fork-tests.log`). As of 2026-11-01, 8-9 `packages/chord` `test/next-node` tests (plugins,
+watcher, socket locks, links frame limit) fail on macOS; upstream CI runs them on Linux only and
+the fork has no chord diff and ships no chord code. When they are the only failures, confirm that
+in the log and release with `PI_SKIP_TESTS=1`.
 
 Release notes are generated: the ingested upstream's `## [X.Y.Z]` changelog
 section when there was an ingest, plus the fork commits since the previous
@@ -167,7 +172,7 @@ Current machines and their single canonical pi:
 
 | Machine | Node | pi location | Notes |
 |---|---|---|---|
-| Mac (here) | mise node 24 | npm global (mise bin) | source checkout + this doc; cargo via rustup (`~/.cargo`, symlinked into `~/.local/bin`) |
+| Mac (here) | mise node 24 | npm global (mise bin) | source checkout + this doc; cargo via rustup (`~/.cargo`, symlinked into `~/.local/bin`); `fd` symlinked into `~/.local/bin` from `~/.pi/agent/bin` (tests run offline and need fd on PATH) |
 | pook.lan | nvm node 25 | `~/.nvm/versions/node/v25.9.0/bin/pi` | nvm on PATH only in interactive shells |
 | epyc.lan | system node 22 | `~/.npm-global/bin/pi` | user `.npmrc` prefix is `~/.npm-global` |
 

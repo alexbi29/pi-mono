@@ -347,12 +347,13 @@ export function getConfiguredSelfUpdateArgv(setting: string[] | undefined): stri
 /** Fill the `{packageName}`, `{version}`, and `{installSpec}` placeholders of a configured self-update command. */
 export function makeConfiguredSelfUpdateCommand(
 	argv: string[],
-	release: { packageName: string; version: string },
+	release: { packageName: string; version: string; installSpec?: string },
 ): SelfUpdateCommand {
 	const values: Record<string, string> = {
 		packageName: release.packageName,
 		version: release.version,
-		installSpec: `${release.packageName}@${release.version}`,
+		// Fork distribution: the self-update plan's installSpec is the release tarball URL.
+		installSpec: release.installSpec ?? `${release.packageName}@${release.version}`,
 	};
 	const [command = "", ...args] = argv.map((arg) =>
 		arg.replace(/\{(packageName|version|installSpec)\}/g, (_, name: string) => values[name]),
