@@ -1,7 +1,9 @@
 import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@earendil-works/pi-tui";
+import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { CompactionSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
+import { createMarkdownTransform } from "./markdown-transform.ts";
 
 /**
  * Component that renders a compaction message with collapsed/expanded state.
@@ -11,11 +13,24 @@ export class CompactionSummaryMessageComponent extends Box {
 	private expanded = false;
 	private message: CompactionSummaryMessage;
 	private markdownTheme: MarkdownTheme;
+	private markdownTransformers: readonly MarkdownTransformer[];
+	private messageId?: string;
+	private timestamp?: string;
 
-	constructor(message: CompactionSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme(), outputPad = 1) {
+	constructor(
+		message: CompactionSummaryMessage,
+		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		outputPad = 1,
+		markdownTransformers: readonly MarkdownTransformer[] = [],
+		messageId?: string,
+		timestamp?: string,
+	) {
 		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
+		this.markdownTransformers = markdownTransformers;
+		this.messageId = messageId;
+		this.timestamp = timestamp;
 		this.updateDisplay();
 	}
 
@@ -45,14 +60,28 @@ export class CompactionSummaryMessageComponent extends Box {
 		const summaryLabel = `Compacted from ${tokenStr} tokens`;
 
 		if (this.expanded) {
+			// The header stays on the label's line; transformers see only the summary content.
 			content.addChild(
 				new Text(`${label} ${theme.fg("customMessageText", `\x1b[1m${summaryLabel}\x1b[22m`)}`, 0, 0),
 			);
 			content.addChild(new Spacer(1));
 			content.addChild(
-				new Markdown(this.message.summary, 0, 0, this.markdownTheme, {
-					color: (text: string) => theme.fg("customMessageText", text),
-				}),
+				new Markdown(
+					this.message.summary,
+					0,
+					0,
+					this.markdownTheme,
+					{ color: (text: string) => theme.fg("customMessageText", text) },
+					{
+						transform: createMarkdownTransform(
+							"summary",
+							() => false,
+							this.markdownTransformers,
+							this.messageId,
+							this.timestamp,
+						),
+					},
+				),
 			);
 		} else {
 			content.addChild(

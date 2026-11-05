@@ -1,4 +1,6 @@
-import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { WatchHandle } from "@earendil-works/chord/watch";
 import type {
 	Api,
 	AssistantMessage,
@@ -8,6 +10,7 @@ import type {
 	Model,
 	Models,
 	ModelThinkingLevel,
+	ThinkingBudgets,
 	Tool,
 	ToolCall,
 	ToolResultMessage,
@@ -333,8 +336,8 @@ export interface ToolExecutionApi<TDetails extends JsonValue = JsonValue> extend
 }
 
 /**
- * The arguments type of a tool with parameter schema `TParameters`: `Static<TParameters>` for schemas built with
- * `@earendil-works/pi-schema`'s builders, `unknown` for other JSON Schema, and `any` for `ToolRegistration<any>`.
+ * The arguments type of a tool with parameter schema `TParameters`: pi-schema's `Static<TParameters>` (the builders'
+ * type, TypeBox's for the common TypeBox kinds, else `unknown`), and `any` for `ToolRegistration<any>`.
  */
 export type ToolArgs<TParameters> = IsAny<TParameters> extends true ? any : Static<TParameters>;
 
@@ -545,6 +548,10 @@ export type ConversationCreateOptions = {
 export type ConversationStreamOptions = {
 	transport?: Transport;
 	timeoutMs?: number;
+	/** WebSocket connection/open handshake timeout; stream idleness uses `timeoutMs`. */
+	websocketConnectTimeoutMs?: number;
+	/** Custom token budgets for thinking levels on token-based providers. */
+	thinkingBudgets?: ThinkingBudgets;
 	/** Provider/SDK retries inside one request attempt. */
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
