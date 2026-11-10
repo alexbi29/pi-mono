@@ -1,6 +1,6 @@
 // Browser runtime: the client host in React, slots that plugins fill, object hooks, connection state, navigation.
 
-import { type Contract, type Held, isChordError, type ParamsOf } from "@earendil-works/chord";
+import type { Contract, Held, ParamsOf } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { NativeWatchable, Watchable } from "@earendil-works/chord/watch";
 import {
@@ -9,13 +9,16 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useLayoutEffect,
+	useOptimistic,
 	useRef,
 	useState,
 	useSyncExternalStore,
+	useTransition,
 } from "react";
 import { createPortal } from "react-dom";
 import { clearKept } from "../web/conversation-cache.ts";
-import { CloseIcon } from "../web/icons.tsx";
+import { ChevronIcon, CloseIcon } from "../web/icons.tsx";
 import {
 	conversationRoute,
 	forgetLastConversation,
@@ -25,6 +28,7 @@ import {
 	type Route,
 	useScrollMemory,
 } from "../web/navigation.ts";
+import { type SettingsEmbed, useSettingsEmbed } from "../web/settings-embed.ts";
 import { useSheetSwipe } from "../web/sheet-swipe.ts";
 import type { Host, VariantOf } from "./chord.ts";
 
@@ -37,13 +41,14 @@ export {
 	useScrollMemory,
 } from "../web/navigation.ts";
 
-import { Access } from "./access.ts";
+import { Access, grantMode } from "./access.ts";
 import type { KeyedRegistry } from "./chord.ts";
 import { canonicalJson } from "./json.ts";
-import { follow, followRegistry, type HeldIn, type HeldRef, statusOf, UI_LINGER } from "./refs.ts";
+import { follow, followRegistry, type HeldIn, type HeldRef, knownRegistry, liveIn, UI_LINGER } from "./refs.ts";
 import { Slots } from "./web-core.ts";
 
-export { Slots, webCoreFacet } from "./web-core.ts";
+export { shortPath } from "../web/path-label.ts";
+export { type SettingsSection, SettingsSections, Slots, ToolActivities, webCoreFacet } from "./web-core.ts";
 
 export const HostContext = createContext<Host | undefined>(undefined);
 
@@ -58,7 +63,9 @@ const EMPTY: ReadonlyMap<string, never> = new Map<string, never>();
 /** A keyed registry's composed table (empty until the host published it); re-renders when it changes. */
 export function useRegistry<V>(registry: KeyedRegistry<V>): ReadonlyMap<string, V> {
 	const host = useHost();
-	const [table, setTable] = useState<ReadonlyMap<string, V>>(EMPTY);
+	// The table known already, at once: a slot mounted with an empty table renders its children unwrapped first, and
+	// wrapping them a render later would mount them again (losing their state and focus).
+	const [table, setTable] = useState<ReadonlyMap<string, V>>(() => knownRegistry(host, registry) ?? EMPTY);
 	useEffect(() => followRegistry(host, registry, (next) => setTable(next)), [host, registry]);
 	return table;
 }
@@ -79,7 +86,7 @@ export function Slot({
 
 /**
  * Renders every component registered as `<prefix>:<name>`, in registration order. Several plugins contribute to one
- * place this way, e.g. `sidebar-foot:devices` and `sidebar-foot:providers`.
+ * place this way, e.g. `composer:voice` and `composer:chat-mode`.
  */
 export function SlotList({ prefix }: { prefix: string }) {
 	const table = useRegistry(Slots);
@@ -94,21 +101,70 @@ export function SlotList({ prefix }: { prefix: string }) {
 	);
 }
 
-/** A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. */
-export function Sheet({
-	title,
-	onClose,
-	className,
-	children,
-}: {
+/** Modal layers on screen now (`Sheet`, `ViewerShell`): a route layer without one shows nothing. */
+let shownModals = 0;
+
+/** Counts the caller as a modal layer on screen while it is mounted. */
+export function useShownModal(): void {
+	useLayoutEffect(() => {
+		shownModals++;
+		return () => {
+			shownModals--;
+		};
+	}, []);
+}
+
+/** Whether a modal layer (a sheet, a viewer) is on screen. */
+export const modalShown = (): boolean => shownModals > 0;
+
+/** How long a route's top layer may show nothing before it is dropped (its code may still be rendering it). */
+const UNSHOWN_LAYER_MS = 1500;
+
+/**
+ * Drops a top sheet or viewer layer that nothing shows: a route restored by a reload whose new code no longer has what
+ * the layer named (a run's sheet whose row changed, a notice's details), or a plugin that is gone. Such a layer would
+ * stay invisible yet hold the route: Back would close nothing, and the drawer's swipe, which waits for open layers to
+ * close, would never start. Mounted once, by the app's layout.
+ */
+export function useUnshownLayers(): void {
+	const route = useRoute();
+	useEffect(() => {
+		const top = route.layers.at(-1);
+		if (!top || top.kind === "drawer") return;
+		const timer = setTimeout(() => {
+			if (modalShown()) return;
+			// Only this route: a navigation queued meanwhile wins (`replace` with the expected route).
+			void getNavigation().replace({ ...route, layers: route.layers.slice(0, -1) }, route);
+		}, UNSHOWN_LAYER_MS);
+		return () => clearTimeout(timer);
+	}, [route]);
+}
+
+type SheetProps = {
 	title: string;
 	onClose: () => void;
+	onBack?: () => void;
 	className?: string;
+	testId?: string;
 	children: ReactNode;
-}) {
+};
+
+/**
+ * A modal sheet: a bottom sheet on phones, a centred dialog on wide screens. Escape and the scrim close it. `onBack`: a
+ * page inside the sheet (a step's detail) has a Back control before its title, which leads to the page under it.
+ * While the Settings window shows a section (src/web/settings-embed.ts), the sheet is that section's page instead.
+ */
+export function Sheet(props: SheetProps) {
+	const embed = useSettingsEmbed();
+	return embed ? <SettingsPage {...props} embed={embed} /> : <ModalSheet {...props} />;
+}
+
+/** A sheet that is always modal, never a page of the Settings window: the Settings window itself. */
+export function ModalSheet({ title, onClose, onBack, className, testId, children }: SheetProps) {
 	const body = useRef<HTMLDivElement>(null);
 	const section = useRef<HTMLElement>(null);
 	const scrim = useRef<HTMLButtonElement>(null);
+	useShownModal();
 	useScrollMemory(body);
 	// Phones: a downward drag on the grip or header closes the sheet (src/web/sheet-swipe.ts).
 	useSheetSwipe(section, scrim, onClose);
@@ -131,10 +187,16 @@ export function Sheet({
 				role="dialog"
 				aria-modal="true"
 				aria-label={title}
+				data-testid={testId}
 				ref={section}
 			>
 				<div className="sheet-grip" aria-hidden="true" />
-				<header className="sheet-head">
+				<header className={`sheet-head ${onBack ? "has-back" : ""}`}>
+					{onBack && (
+						<button type="button" className="icon-button back" onClick={onBack} aria-label="Back">
+							<ChevronIcon size={18} />
+						</button>
+					)}
 					<h2>{title}</h2>
 					<button type="button" className="icon-button" onClick={onClose} aria-label="Close">
 						<CloseIcon />
@@ -149,18 +211,40 @@ export function Sheet({
 	);
 }
 
-/** Ends that asking again cannot change: a `useObject` reference stays ended after them. */
-const refused = (error: unknown): boolean =>
-	isChordError(error) &&
-	(error.code === "forbidden" || error.code === "invalid" || error.code === "contract_mismatch");
+/**
+ * A sheet as a page of the Settings window, in its content pane: the window is the modal (its × and Escape close
+ * everything), so the page has only its title and, inside a section or on phones, Back.
+ */
+function SettingsPage({ title, onBack, className, testId, children, embed }: SheetProps & { embed: SettingsEmbed }) {
+	const body = useRef<HTMLDivElement>(null);
+	useScrollMemory(body);
+	const back = onBack ?? embed.back;
+	return createPortal(
+		<section className={`settings-page ${className ?? ""}`} aria-label={title} data-testid={testId}>
+			<header className={`settings-page-head ${back ? "has-back" : ""}`}>
+				{back && (
+					<button type="button" className="icon-button back" onClick={back} aria-label="Back">
+						<ChevronIcon size={18} />
+					</button>
+				)}
+				<h2>{title}</h2>
+			</header>
+			{/* `sheet-body` too: a plugin's styles for its sheet's body apply to the page as well. */}
+			<div className="sheet-body settings-page-body" ref={body}>
+				{children}
+			</div>
+		</section>,
+		embed.element,
+	);
+}
 
 /**
  * Holds `type(params)` while mounted (on the host its contract places it), synchronously (`host.hold`): it may still be
- * loading, and its state reads as `undefined` in `useReadable` until it is live. Different params or another host
- * release it and hold anew; an unmount releases it after its type's linger (`UI_LINGER`: a conversation stays held a
- * while, so switching back is instant). A reference that ends but not by a refusal (archive, a revoked grant renewed)
- * is replaced by a fresh one after a short delay. `undefined` when `params` is undefined. With `variant`, `undefined`
- * unless the reference is live in that variant (and typed as it).
+ * loading, and its state reads as `undefined` in `useReadable` until it is live. Chord rebinds it by itself (a dropped
+ * link, a restarted worker, a reload). Different params or another host release it and hold anew; an unmount releases
+ * it after its type's linger (`UI_LINGER`: a conversation stays held a while, so switching back is instant).
+ * `undefined` when `params` is undefined. With `variant`, `undefined` unless the reference is live in that variant (and
+ * typed as it).
  */
 export function useObject<C extends Contract>(type: C, params: ParamsOf<C> | undefined): Held<C> | undefined;
 export function useObject<C extends Contract, const V extends VariantOf<C>>(
@@ -179,42 +263,51 @@ export function useObject<C extends Contract>(
 		key: undefined,
 		ref: undefined,
 	});
-	const [, setTick] = useState(0);
-	const variant = options.variant;
 	// biome-ignore lint/correctness/useExhaustiveDependencies: key includes params by value; inline params objects must not release/reacquire the reference every render.
 	useEffect(() => {
 		if (key === undefined || params === undefined) {
 			setState({ key, ref: undefined });
 			return;
 		}
-		let current = true;
-		let ref: Held<C> | undefined;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let stop = (): void => {};
-		const acquire = (): void => {
-			stop();
-			if (ref) UI_LINGER.release(ref, type.name);
-			const acquired = host.hold(type, params, BACKGROUND_CONTEXT);
-			ref = acquired;
-			setState({ key, ref: acquired });
-			stop = follow(acquired.state, (next) => {
-				if (!current || acquired !== ref) return;
-				setTick((tick) => tick + 1);
-				if (next.kind === "ended" && !refused(next.error)) timer = setTimeout(() => current && acquire(), 500);
-			});
-		};
-		acquire();
-		return () => {
-			current = false;
-			clearTimeout(timer);
-			stop();
-			if (ref) UI_LINGER.release(ref, type.name);
-		};
+		const ref = host.hold(type, params, BACKGROUND_CONTEXT);
+		setState({ key, ref });
+		return () => UI_LINGER.release(ref, type.name);
 	}, [host, type, key]);
 	const ref = state.key === key ? state.ref : undefined;
-	if (variant !== undefined && (ref === undefined || statusOf(ref) !== "live" || ref.variant !== variant))
+	// Re-renders when the reference goes live, fails or ends: `variant` and `liveIn` read its state.
+	const status = useStatus(ref);
+	if (options.variant !== undefined && (ref === undefined || status !== "live" || ref.variant !== options.variant))
 		return undefined;
 	return ref;
+}
+
+/**
+ * Optimistic UI (docs/optimistic-ui.md): `value` as shown with the guesses of this component's calls in flight, with
+ * React's `useOptimistic`. `run(guess, call)` shows `apply(value, guess)` at once and keeps it until `call` settles.
+ * Chord applies the state the answering host committed before it sends the answer, so the real value has replaced
+ * the guess when it goes; a call that fails drops its guess (the value rolls back) and `onError` says why. `pending`:
+ * a call is in flight (long work shows that instead of a guess).
+ */
+export function useOptimisticCall<T, G>(
+	value: T,
+	apply: (value: T, guess: G) => T,
+	onError: (error: unknown) => void,
+): readonly [shown: T, run: (guess: G, call: () => Promise<unknown>) => void, pending: boolean] {
+	const [shown, add] = useOptimistic(value, apply);
+	const [pending, start] = useTransition();
+	const run = useCallback(
+		(guess: G, call: () => Promise<unknown>) =>
+			start(async () => {
+				add(guess);
+				try {
+					await call();
+				} catch (error) {
+					onError(error);
+				}
+			}),
+		[add, onError],
+	);
+	return [shown, run, pending] as const;
 }
 
 /**
@@ -394,6 +487,16 @@ export function useOwner(): boolean {
 	return owner;
 }
 
+/**
+ * Whether this browser may write in `session` (send, stop, the workspace): the owner as last known (`useOwner`, so no
+ * wait for `Access`), or a guest whose grant gives it full access there.
+ */
+export function useCanWrite(session: string | undefined): boolean {
+	const owner = useOwner();
+	const grant = useReadable(liveIn(useObject(Access, {}), "guest")?.grant);
+	return owner || grantMode(grant, session) === "full";
+}
+
 /** Forgets what this browser keeps for the owner: signing out. The kept app (public/sw.js) goes too. */
 export async function forgetOwner(): Promise<void> {
 	ownerKnown = false;
@@ -407,7 +510,5 @@ export async function forgetOwner(): Promise<void> {
 	} catch {}
 }
 
-/** A home directory shown as `~` (Termux and Linux homes). */
-export function shortPath(path: string): string {
-	return path.replace(/^\/data\/data\/com\.termux\/files\/home/, "~").replace(/^\/home\/[^/]+/, "~");
-}
+/** A failure's message as the UI shows it (a ChordError's message, a thrown string). */
+export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));

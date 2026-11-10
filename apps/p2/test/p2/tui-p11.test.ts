@@ -471,6 +471,10 @@ function ownerStubs(calls: Calls) {
 				uploadKey: () => ({ publicKey: "", identityFile: "" }),
 				publicKey: () => null,
 				listDirectory: () => ({ path: "/", parent: null, directories: [], truncated: false }),
+				sandboxStatus: () => ({ state: "stopped" as const }),
+				sandboxStart: () => ({ state: "stopped" as const }),
+				sandboxStop: () => ({ state: "stopped" as const }),
+				sandboxResetDisk: () => ({ state: "stopped" as const }),
 			}),
 		],
 		[
@@ -595,6 +599,9 @@ test("owner diagnostics: notices once, /notices dismisses, /logs follows sources
 	await poll(() => grants.length === 1);
 	assert.deepEqual(grants[0], ["devCommand", { action: "reload" }]);
 	await poll(() => runtime.notices.some((notice) => notice.text === "Reloaded chat, status"));
+	runtime.ctx.commands.run("p2.dev.restart");
+	await poll(() => grants.length === 2);
+	assert.deepEqual(grants[1], ["devCommand", { action: "restart" }]);
 });
 
 test("guests never acquire owner objects and cannot open owner panels", async (t) => {
@@ -606,6 +613,7 @@ test("guests never acquire owner objects and cannot open owner panels", async (t
 		"p2.notices",
 		"p2.worker.retry",
 		"p2.dev.reload",
+		"p2.dev.restart",
 		"p2.envs",
 		"p2.ports",
 		"p2.devices",

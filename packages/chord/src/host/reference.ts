@@ -4,10 +4,11 @@
 // binds, waits unbound and binds again (slice 7b §6); one of an older version reads adapted members (Q10).
 
 import { BACKGROUND_CONTEXT, type Context } from "../context/index.ts";
-import type { Contract, Implementation, ParamsOf } from "../contracts/index.ts";
+import type { Contract, Implementation, KindShape, ParamsOf } from "../contracts/index.ts";
 import {
 	type CurrentVariants,
 	currentVariants,
+	keyOfAddress,
 	LOCAL,
 	type MethodData,
 	type ShapeOf,
@@ -15,10 +16,12 @@ import {
 	type VariantImplementation,
 } from "../contracts/internal.ts";
 import { ChordError, type FailureCause, type Principal } from "../data/index.ts";
+import { invalid } from "../data/internal.ts";
 import { Keyed, type KeyedSlot, type SealToken, Singleton } from "../documents/internal.ts";
 import type { JsonValue } from "../json.ts";
 import { RETRY_HOPS } from "../link/internal.ts";
 import { type Batch, Constant, type DeriveSource, Source } from "../state/internal.ts";
+import { storedText } from "../store/text.ts";
 import type { NativeWatchable, Watch, Watchable } from "../watch.ts";
 import type { PinnedKey } from "./attempt.ts";
 import { type Caller, withLinkedAbortSignal } from "./ctx.ts";
@@ -69,10 +72,17 @@ type Lifecycle = {
  * or a route address (`RemoteObject`). It tells its holders of each change of `state`.
  */
 export interface Target {
+	/** Where it is: an object on this host, or one held over a link (another host decides what it serves). */
+	readonly kind: "local" | "remote";
 	/** The object in errors: its type, and its params key when it has params. */
 	readonly label: string;
 	/** Its state as its references show it. */
 	readonly state: RefState;
+	/**
+	 * Its state as a reference of `version` and `fingerprint` sees it: on this host `live` also while a restart's open
+	 * old attempt binds that version (decision "Reload restarts every affected object", rule 5); `state` over a link.
+	 */
+	stateFor(version: number, fingerprint: string): RefState;
 	/** Whether its state members have values: live once, for a remote object bound once. */
 	readonly hydrated: boolean;
 	/** The variant bound last; `undefined` for a local object and before the first binding. */
@@ -248,6 +258,8 @@ export class Binding implements Holder, UnboundRequest {
 	#heldKeys: ReferenceKeys | undefined;
 	/** The instance it attached to last: it takes last values only from that one (never one it never followed). */
 	#attached: Attachable | undefined;
+	/** Whether presence lists show it: every reference but a restart's readiness bindings (`unlist`). */
+	#listed = true;
 
 	constructor(
 		contract: Contract,
@@ -267,7 +279,7 @@ export class Binding implements Holder, UnboundRequest {
 		const methods = new Map<string, MethodData>();
 		for (const variant of currentVariants(contract).values()) {
 			for (const member of variant.state.keys()) reference[member] = new ReferenceMember(this, member);
-			for (const member of variant.keyed.keys()) reference[member] = new ReferenceKeyed(this, member);
+			for (const [member, { key }] of variant.keyed) reference[member] = new ReferenceKeyed(this, member, key);
 			for (const [member, method] of variant.methods) methods.set(member, method);
 		}
 		for (const [member, method] of methods) {
@@ -302,7 +314,11 @@ export class Binding implements Holder, UnboundRequest {
 	/** The reference's state. */
 	get refState(): RefState {
 		const state = this.#state;
-		if (state.kind === "bound") return state.target.state;
+		if (state.kind === "bound") {
+			// A bound reference keeps its contract until it is released.
+			const { version, fingerprint } = this.#contract!;
+			return state.target.stateFor(version, fingerprint);
+		}
 		if (state.kind === "waiting") return state.failure ?? LOADING;
 		if (state.kind === "refused") return state.failure;
 		return state.kind === "unbound" ? LOADING : state.state;
@@ -456,6 +472,27 @@ export class Binding implements Holder, UnboundRequest {
 		this.dependent?.dependencyMoved();
 	}
 
+	/** Whether presence lists show it (§19). */
+	get listed(): boolean {
+		return this.#listed;
+	}
+
+	/** Keeps it out of presence lists, before it binds: a restart's readiness binding is no consumer of its own. */
+	unlist(): void {
+		this.#listed = false;
+	}
+
+	/** Whether its members have values now: bound to an object that shows it live and has them. */
+	#hydratedNow(): boolean {
+		const state = this.#state;
+		return state.kind === "bound" && state.target.hydrated && this.refState.kind === "live";
+	}
+
+	/** Resolves once `done(state)` holds, checked now and at every change; rejects at its end or `context`'s abort. */
+	until(done: (state: RefState) => boolean, context: Context): Promise<void> {
+		return this.#until((state) => (done(state) ? DONE : WAIT), context);
+	}
+
 	/** Resolves when the reference is live; rejects with a broken failure's error, or its end. Getters wait for it. */
 	live(context: Context): Promise<void> {
 		return this.#until((state) => {
@@ -530,7 +567,7 @@ export class Binding implements Holder, UnboundRequest {
 		const state = this.#state;
 		switch (state.kind) {
 			case "bound": {
-				const current = state.target.state;
+				const current = this.refState;
 				if (current.kind === "failed") throw current.cause.error;
 				return state.target;
 			}
@@ -568,13 +605,13 @@ export class Binding implements Holder, UnboundRequest {
 	 * through (Opus G3).
 	 */
 	async firstValues(context: Context): Promise<void> {
-		if (this.#state.kind === "bound" && this.#state.target.hydrated) return;
+		if (this.#hydratedNow()) return;
 		await this.#until((state) => (state.kind === "live" ? DONE : WAIT), context);
 	}
 
 	/** Resolves once the object's members have values; rejects when the reference fails or is released first. */
 	async hydrated(context: Context): Promise<void> {
-		if (this.#state.kind === "bound" && this.#state.target.hydrated) return;
+		if (this.#hydratedNow()) return;
 		await this.#until((state) => {
 			if (state.kind === "live") return DONE;
 			if (state.kind === "failed") return { kind: "failed", error: state.cause.error };
@@ -798,14 +835,31 @@ class ReferenceMember {
 	}
 }
 
-/** A keyed member of a reference (slice 6a §12): reads by key behave as calls (they wait while loading). */
+/**
+ * A keyed member of a reference (slice 6a §12): reads by key behave as calls (they wait while loading). A host-keyed
+ * one takes addresses of its kind (checked: a trust boundary for JavaScript callers) and reads the provider's slot by
+ * their canonical keys.
+ */
 class ReferenceKeyed {
 	readonly #binding: Binding;
 	readonly #member: string;
+	/** The host kind the member's keys are addresses of; `undefined` for string keys. */
+	readonly kind: (KindShape & { readonly kind: string }) | undefined;
 
-	constructor(binding: Binding, member: string) {
+	constructor(binding: Binding, member: string, kind: (KindShape & { readonly kind: string }) | undefined) {
 		this.#binding = binding;
 		this.#member = member;
+		this.kind = kind;
+	}
+
+	/** The provider slot's key of a key the consumer gave: an address's canonical key, or the string itself. */
+	#key(key: unknown): string {
+		const kind = this.kind;
+		// A string-keyed member's keys are strings (its type).
+		if (kind === undefined) return key as string;
+		const stored = keyOfAddress(kind, key);
+		if (stored === undefined) throw invalid("args", `${this.#member}: expected an address of ${kind.kind}`);
+		return storedText(stored, `${this.#member}: key`);
 	}
 
 	/** The provider's slot: the ultimate provider's, through re-exposures (rule 22). */
@@ -815,10 +869,11 @@ class ReferenceKeyed {
 
 	/** This member as another object re-exposing it has it: its keys held through this reference. */
 	get keyed(): KeyedBinding {
-		return { kind: "reexposed", binding: this.#binding, member: this.#member };
+		return { kind: "reexposed", binding: this.#binding, member: this.#member, key: this.kind?.kind };
 	}
 
-	async get(key: string, context: Context): Promise<JsonValue | undefined> {
+	async get(raw: unknown, context: Context): Promise<JsonValue | undefined> {
+		const key = this.#key(raw);
 		await this.#binding.hydrated(context);
 		const slot = this.slot;
 		const map = this.#binding.keyedMapping(this.#member);
@@ -830,7 +885,8 @@ class ReferenceKeyed {
 	 * A watch of the document at `key` across the object's attempts (it holds the key through the object), `undefined`
 	 * when absent; it ends with this reference.
 	 */
-	async watch(key: string, context: Context): Promise<Watch<JsonValue> | undefined> {
+	async watch(raw: unknown, context: Context): Promise<Watch<JsonValue> | undefined> {
+		const key = this.#key(raw);
 		await this.#binding.firstValues(context);
 		const slot = this.slot;
 		if ((await slot.get(key, ownAccess(slot), context)) === undefined) return undefined;
@@ -852,9 +908,9 @@ class ReferenceKeyed {
 		return this.#binding.follow(watch);
 	}
 
-	at(key: string): Watchable<JsonValue> {
+	at(key: unknown): Watchable<JsonValue> {
 		// The pinned key's values are the member's documents.
-		return this.#binding.at(this.#member, key) as unknown as Watchable<JsonValue>;
+		return this.#binding.at(this.#member, this.#key(key)) as unknown as Watchable<JsonValue>;
 	}
 }
 

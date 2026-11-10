@@ -71,6 +71,11 @@
 			"types": "./dist/node/workers/index.d.ts",
 			"import": "./dist/node/workers/index.js"
 		},
+		"./compression": {
+			"source": "./src/node/compression.ts",
+			"types": "./dist/node/compression.d.ts",
+			"import": "./dist/node/compression.js"
+		},
 		"./workers/child": {
 			"source": "./src/node/workers/child.ts",
 			"types": "./dist/node/workers/child.d.ts",
@@ -90,6 +95,11 @@
 			"source": "./src/node/app/index.ts",
 			"types": "./dist/node/app/index.d.ts",
 			"import": "./dist/node/app/index.js"
+		},
+		"./app/files": {
+			"source": "./src/node/app/files-entry.ts",
+			"types": "./dist/node/app/files-entry.d.ts",
+			"import": "./dist/node/app/files-entry.js"
 		},
 		"./web": {
 			"source": "./src/web/index.ts",

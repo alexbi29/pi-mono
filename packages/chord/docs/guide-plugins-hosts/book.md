@@ -45,8 +45,8 @@ This book builds the app in that order. Each chapter adds one concept and shows 
    server, workers and tabs load the scripts for their kind.
 6. **Plugins meet through types and registries.** One plugin uses another's objects through its contract, or
    contributes to a registry another defines. Nothing else crosses between plugins.
-7. **An edit is a rollout.** Change a file, build, roll out: the server, then every worker, swap the plugin's objects in
-   place; a broken edit keeps the old code running and reports why.
+7. **An edit is a rollout.** Change a file, build, roll out: the server, then every worker, restart the plugin's
+   objects (running work finishes on the old code); a broken edit keeps the old code running and reports why.
 :::
 
 :::flow wide animate | How it all fits: plugins on disk are built once on the server; each host evaluates the facets of its kind; tabs and the TUI are clients that reach workers' objects through the server.
@@ -225,9 +225,9 @@ self.onLive(async (ctx) => {                                  // a routine start
 });
 ```
 
-Natives are why some objects restart when their plugin changes: an open connection cannot be moved to new code, so
-Chord closes it and opens it again. Objects without natives are swapped in place. A first read of a table is no
-native: declare it as a live query, not with `self.open`, or the object restarts at every change of its plugin.
+Every live object restarts when its plugin changes; natives close (`reload`) and open again with the new code, since
+an open connection cannot be moved to new code. A first read of a table needs no native: declare it as a live query,
+not with `self.open`.
 
 **Await what you start in a root or a handler.** What is started with a context ends with it. Code outside objects
 gets its `ctx` from `host.root(fn, ctx)`, and that scope seals when `fn` returns; a handler's context ends when its
@@ -445,13 +445,18 @@ full (design §3). Without that, the answer could overtake the index change and 
 So the rule for a method that should feel instant: it awaits its own changes, the pushes to other hosts included (the
 worker's `rename` awaits its report to the index), and keeps them on the host that answers or relays the answer.
 
-A terminal UI does the same with its component scope: `scope.optimistic(read)` wraps a reader and returns it with
-`show(value, call)`, which shows `value` until the call settles (until every call shown, when they overlap):
+A terminal UI does the same with its component scope: `scope.optimistic(read, reduce?)` wraps a reader and returns
+it with `add(action, call)` and `pending()`, as React's `useOptimistic`: while calls are in flight the reader shows
+`reduce(current, action)` over each action, in order (without a reducer the last action is the value), until every
+call added settles. `add` returns the call; a rejection is the caller's to handle.
 
 ```ts
 const titles = scope.watch(sessions.titles);
-const [title, show] = scope.optimistic(() => titles()?.[id]);
-await show(next, session.rename(next, ctx));              // title() is `next` at once, the real one when it settles
+const [title, add] = scope.optimistic(() => titles()?.[id]);
+await add(next, session.rename(next, ctx));               // title() is `next` at once, the real one when it settles
+
+const [rows, change] = scope.optimistic(() => list() ?? [], (rows, id: string) => rows.filter((row) => row.id !== id));
+change(id, store.remove({ id }, ctx)).catch(fail);        // gone at once; back with the error if refused
 ```
 
 `test/examples/63-optimistic-answers.ts` runs this with a stalled terminal client and prints what each redraw showed.
@@ -698,11 +703,12 @@ then gives every object of the changed plugin its fate:
 
 | The object | What happens |
 | --- | --- |
-| holds no natives (open files, sockets), the new code neither | **swapped** in place: new methods, same documents; running calls finish on the old code |
-| holds natives | **restarted**: calls wait, running ones finish, natives close and reopen with the new code |
+| live | **restarted**: running calls, and the calls they make with their `ctx`, finish on the old code; new calls wait for the new code; same documents; natives close and reopen |
+| not live (failed, parked) | **retried** on the new code |
 | its type was removed | **ended**; its users wait until something serves it again |
 
-The tab's reference follows the new object and gets one frame with the difference. Nothing reconnects. If the edit
+The tab's reference stays live while the old code drains, shows `loading` for a moment, then follows the new object
+with one frame of difference. Nothing reconnects. If the edit
 is broken (a syntax error, a factory that throws), that plugin keeps its old code on that host and the report says why;
 every other plugin of the rollout applies.
 
@@ -799,7 +805,11 @@ const app = await startServer<NotesPrincipal>({
 	root: "./plugins",                              // the app's own plugins: a required root
 	api: { name: "@notes/app", versions: ["v1"], modules: { "@notes/app/v1": v1, "@notes/app/v1/server": v1server } },
 	kinds: { server: { platform: "node" }, worker: { platform: "node" } },
-	principal: { server: { kind: "server" }, worker: (address) => ({ kind: "worker", project: address.key }) },
+	principal: {
+		server: { kind: "server" },
+		worker: (address) => ({ kind: "worker", project: address.key }),
+		owner: { kind: "owner" },                   // whom the owner link, the token file and pairing sign in
+	},
 	workers: [{
 		kind: Project,                              // one worker per project
 		entry: "./worker.ts",
@@ -824,8 +834,8 @@ directory and store, the host at the project's address, the link to the server f
 
 Plugins still import only the app's API; the API re-exports the kit's objects it offers:
 
-- `AppInfo` on the server (data directory, app name, API version) and `WorkerInfo` on workers (the address and the
-  start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
+- `AppInfo` on the server (data directory, app name, API version, owner) and `WorkerInfo` on workers (the address and
+  the start data `start(address)` made): the **start-data objects**. Process values reach plugins only through them.
 - `Files`, one per host: `put` for small files, `begin`, `append` and `finish` for large ones, ranged `read`, `remove`
   and a watchable `list`, stored in the host's directory with caps per host.
 - `Sessions` on the server: `issue`, `revoke`, `list`.
@@ -840,7 +850,8 @@ HTTP **denies by default**: a request without a principal gets 401 before any pl
 `public: true`. Someone gets a principal through a **session**: a random token, kept in the store only as a hash, sent
 as a signed cookie by a browser or as `Authorization: Bearer` by a command-line client.
 
-The first session is the owner's. At each start the kit makes a one-time **owner link**,
+The first session is the owner's, the principal the app names in `principal.owner` (a variant of its own, as here, or
+one of its users). At each start the kit makes a one-time **owner link**,
 `http://127.0.0.1:8788/_chord/owner#<token>`, valid ten minutes; the start script prints it. The token is in the
 fragment, which browsers never send, so it never reaches a log: the page posts it, the kit consumes it and sets the
 owner's cookie. A command-line client on the same machine reads `<dataDir>/owner-token` (mode 0600). One on another

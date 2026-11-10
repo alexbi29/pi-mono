@@ -34,6 +34,7 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			.hold(Models, {}, BACKGROUND_CONTEXT)
 			.setDefault({ provider: "faux", modelId: "faux-1", thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -120,6 +121,48 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 		await browser.wait(`!document.querySelector('.app.drawer-open')`);
 	});
 
+	it("resizes the desktop sidebar from its edge within limits, remembers the width, and ignores it on phones", async () => {
+		await browser.metrics(1280, 900);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
+		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
+		const width = () => browser.evaluate<number>(`document.querySelector('.drawer').getBoundingClientRect().width`);
+		const drag = async (x: number) => {
+			const point = await browser.evaluate<{ x: number; y: number }>(
+				`(()=>{const r=document.querySelector('.sidebar-resize').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`,
+			);
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mousePressed",
+				...point,
+				button: "left",
+				clickCount: 1,
+			});
+			const to = { x, y: point.y };
+			await browser.call("Input.dispatchMouseEvent", { type: "mouseMoved", ...to, button: "left", buttons: 1 });
+			await browser.call("Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				...to,
+				button: "left",
+				clickCount: 1,
+			});
+		};
+		assert.equal(await width(), 300);
+		await drag(400);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='400'`);
+		assert.equal(await width(), 400);
+		await drag(0);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='220'`);
+		await drag(1200);
+		await browser.wait(`localStorage.getItem('pi-sidebar-width')==='560'`);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/`);
+		await browser.wait(`document.querySelector('.sidebar-resize') && !document.querySelector('.offline')`);
+		assert.equal(await width(), 560);
+		await browser.metrics(390, 844);
+		await browser.wait(`getComputedStyle(document.querySelector('.sidebar-resize')).display==='none'`);
+		assert.equal(await width(), 320);
+		await browser.evaluate("localStorage.removeItem('pi-sidebar-width')");
+	});
+
 	it("groups cwd identities, orders pinned sessions first, expands child rows in the header, and keeps child busy dots visible when collapsed", async () => {
 		const owner = fixture.browser();
 		const sessions = await holdIn(owner, Sessions, {}, "owner");
@@ -146,6 +189,16 @@ describe("drawer and new-session parity", { skip: !browserTests }, () => {
 			"Pinned parent",
 			"Recent sibling",
 		]);
+		// A folder's "+" opens a new session in that folder.
+		const label = await browser.evaluate<string>(
+			`document.querySelector('.session-scroll .group h3 .group-label').textContent`,
+		);
+		await browser.click(".session-scroll .group h3 .group-new");
+		await browser.wait(
+			`location.pathname==='/' && document.querySelector('.cwd-pick span')?.textContent===${JSON.stringify(label)}`,
+		);
+		await browser.open(`http://127.0.0.1:${fixture.server.port}/s/${pinned.id}`);
+		await browser.wait(`[...document.querySelectorAll('.session-title')].some(e=>e.textContent==='Pinned parent')`);
 		const chat = await holdIn(owner, Chat, { session: pinned.id, conversation: 1 }, "participant");
 		await chat.send({ text: "subagent", requestId: "drawer-child" }, BACKGROUND_CONTEXT);
 		const agents = await holdIn(owner, Subagents, {}, "reader");

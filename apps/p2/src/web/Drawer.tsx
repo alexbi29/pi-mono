@@ -3,11 +3,15 @@ import type { SearchResults } from "../../plugins/search/contract.ts";
 import type { Session } from "../../plugins/sessions/contract.ts";
 import type { Child } from "../../plugins/subagents/contract.ts";
 import { type Grant, grantMode } from "../runtime/access.ts";
-import { shortPath } from "../runtime/web.tsx";
+import { locationLabel } from "./path-label.ts";
+
+export { locationLabel } from "./path-label.ts";
 export type SessionSummary = Session & {
 	subagents: Child[];
 	/** `unread`: a finished answer the owner has not read on any device (see `SessionReads`). */
 	worker: { busy: number[]; error?: string; unread?: boolean };
+	/** A lifecycle operation of the session: running (`label` only), or failed with its error and a Dismiss. */
+	operation?: { readonly label: string; readonly error?: string; readonly dismiss?: () => void };
 };
 
 import { requestReveal } from "./Chat.tsx";
@@ -15,6 +19,7 @@ import {
 	BranchIcon,
 	ChevronIcon,
 	FolderIcon,
+	LockIcon,
 	MoonIcon,
 	PencilIcon,
 	PinIcon,
@@ -27,15 +32,10 @@ import { PiLogo } from "./PiLogo.tsx";
 import { getTheme, setTheme, subscribeTheme, type ThemePreference } from "./theme.ts";
 
 /** Working (pulsing), else an unread answer (steady blue), else nothing. */
-function SessionDot({ worker }: { worker: SessionSummary["worker"] }) {
+export function SessionDot({ worker }: { worker: SessionSummary["worker"] }) {
 	if (worker.busy?.length) return <span className="live-dot" title="Working" />;
 	if (worker.unread) return <span className="unread-dot" title="New answer" />;
 	return null;
-}
-
-/** Where a session's tools run: `gpu:/home/me/proj` on a remote env, the shortened path locally. */
-export function locationLabel(env: string | null | undefined, cwd: string): string {
-	return env ? `${env}:${cwd}` : shortPath(cwd);
 }
 
 function ago(time: number): string {
@@ -225,6 +225,19 @@ function SessionRow({
 					</button>
 				)}
 			</div>
+			{session.operation && (
+				<div className={`session-operation ${session.operation.error === undefined ? "" : "failed"}`}>
+					<span title={session.operation.error}>
+						{session.operation.label}
+						{session.operation.error === undefined ? "" : `: ${session.operation.error}`}
+					</span>
+					{session.operation.dismiss && (
+						<button type="button" className="text-action" onClick={session.operation.dismiss}>
+							Dismiss
+						</button>
+					)}
+				</div>
+			)}
 			{branches && (
 				<BranchRows
 					session={session}
@@ -264,8 +277,7 @@ function SessionRow({
 export const Drawer = memo(function Drawer({
 	onSearch,
 	onRestore,
-	onError,
-	footer,
+	head,
 	sessions,
 	activeId,
 	conversationId,
@@ -274,16 +286,17 @@ export const Drawer = memo(function Drawer({
 	onBranch,
 	onRenameBranch,
 	onNew,
+	onNewIn,
 	onCollapse,
-	onProviders,
-	onEnvs,
-	onOwnerLink,
+	actions,
 	guest,
+	sandboxes,
 }: {
 	onSearch?: (query: string, archived: boolean) => Promise<SearchResults>;
-	onRestore: (id: string) => Promise<unknown>;
-	onError: (error: string) => void;
-	footer?: ReactNode;
+	/** Restores an archived session and opens it (at `conversationId`, a message hit's). */
+	onRestore: (id: string, conversationId?: number) => void;
+	/** Entries above the folders (plugins' `drawer-head` slots), shown while the list is neither searched nor archived. */
+	head?: ReactNode;
 	sessions: SessionSummary[];
 	activeId?: string;
 	conversationId: number;
@@ -294,11 +307,14 @@ export const Drawer = memo(function Drawer({
 	/** Asks for a new label of one of a session's `/tree` branches (the owner's). */
 	onRenameBranch?: (id: string, conversationId: number) => void;
 	onNew: () => void;
+	/** Starts a new session in a sidebar folder's location; absent: folders have no "+". */
+	onNewIn?: (env: string | null, cwd: string) => void;
 	onCollapse: () => void;
-	onProviders: () => void;
-	onEnvs: () => void;
-	onOwnerLink: () => void;
+	/** Icon buttons before the theme switch at the footer's end (the owner's), e.g. the Settings gear. */
+	actions?: ReactNode;
 	guest?: Grant;
+	/** Environments that are sandboxes (the owner's view): their groups show a lock. */
+	sandboxes?: ReadonlySet<string>;
 }) {
 	const [query, setQuery] = useState("");
 	const [archived, setArchived] = useState(false);
@@ -323,11 +339,11 @@ export const Drawer = memo(function Drawer({
 	const visible = sessions.filter(
 		(session) => Boolean(session.archivedAt) === archived && (!ids || ids.has(session.id)),
 	);
-	// Grouped by where tools run: the same path on two hosts is two groups.
+	// Group by full locations, not shortened labels: two home directories may both read as ~/project.
 	const groups = new Map<string, SessionSummary[]>();
 	const latest = new Map<string, number>();
 	for (const session of visible) {
-		const key = locationLabel(session.env, session.cwd);
+		const key = JSON.stringify([session.env ?? null, session.cwd]);
 		const group = groups.get(key);
 		if (group) group.push(session);
 		else groups.set(key, [session]);
@@ -337,10 +353,6 @@ export const Drawer = memo(function Drawer({
 	const ordered = [...groups].sort(([a], [b]) => (latest.get(b) ?? 0) - (latest.get(a) ?? 0));
 	for (const [, list] of ordered)
 		list.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
-	const restore = (id: string, conversationId?: number) =>
-		void onRestore(id)
-			.then(() => onOpen(id, conversationId))
-			.catch((error: Error) => onError(error.message));
 	if (guest)
 		return (
 			<nav className="drawer-content" aria-label="Shared session">
@@ -412,45 +424,69 @@ export const Drawer = memo(function Drawer({
 				/>
 			</label>
 			<div className="session-scroll">
-				{ordered.map(([location, list]) => (
-					<section key={location} className="group">
-						<h3 title={list[0] ? `${list[0].env ? `${list[0].env}:` : ""}${list[0].cwd}` : location}>
-							<FolderIcon /> {location}
-						</h3>
-						{list.map((session) => (
-							<SessionRow
-								key={session.id}
-								session={session}
-								archived={archived}
-								conversationId={session.id === activeId ? conversationId : session.main}
-								onOpen={onOpen}
-								onBranch={onBranch}
-								onRenameBranch={onRenameBranch}
-								active={session.id === activeId}
-							>
-								<button
-									type="button"
-									className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
-									onClick={() => (archived ? restore(session.id) : onOpen(session.id))}
+				{!archived && !query && head}
+				{ordered.map(([key, list]) => {
+					// A group holds at least one session; its first names the folder's location.
+					const first = list[0]!;
+					const location = locationLabel(first.env, first.cwd);
+					return (
+						<section key={key} className="group">
+							<h3 className="group-head" title={`${first.env ? `${first.env}:` : ""}${first.cwd}`}>
+								<FolderIcon />
+								{first.env && sandboxes?.has(first.env) && (
+									<span className="group-lock" title="Sandbox">
+										<LockIcon size={12} />
+									</span>
+								)}
+								<span className="group-label">{location}</span>
+								{onNewIn && !archived && (
+									<button
+										type="button"
+										className="group-new"
+										aria-label={`New session in ${location}`}
+										title={`New session in ${location}`}
+										disabled={!connected}
+										onClick={() => onNewIn(first.env ?? null, first.cwd)}
+									>
+										<PlusIcon size={14} />
+									</button>
+								)}
+							</h3>
+							{list.map((session) => (
+								<SessionRow
+									key={session.id}
+									session={session}
+									archived={archived}
+									conversationId={session.id === activeId ? conversationId : session.main}
+									onOpen={onOpen}
+									onBranch={onBranch}
+									onRenameBranch={onRenameBranch}
+									active={session.id === activeId}
 								>
-									<span className="session-title">
-										{session.pinned && <PinIcon size={12} />}
-										{session.title}
-									</span>
-									<span className="session-meta">
-										{session.worker.error && (
-											<span className="error session-worker-error" title={session.worker.error}>
-												Worker failed
-											</span>
-										)}
-										<SessionDot worker={session.worker} />
-										{archived ? "Tap to restore" : ago(session.updatedAt)}
-									</span>
-								</button>
-							</SessionRow>
-						))}
-					</section>
-				))}
+									<button
+										type="button"
+										className={`session-main ${session.id === activeId && conversationId === session.main ? "active" : ""}`}
+										onClick={() => (archived ? onRestore(session.id) : onOpen(session.id))}
+									>
+										<span className="session-title">
+											{session.pinned && <PinIcon size={12} />}
+											{session.title}
+										</span>
+										<span className="session-meta">
+											{session.worker.error && (
+												<span className="error session-worker-error" title={session.worker.error}>
+													Worker failed
+												</span>
+											)}
+											<SessionDot worker={session.worker} />
+											{archived ? "Tap to restore" : ago(session.updatedAt)}
+										</span>
+									</button>
+								</SessionRow>
+							))}
+						</section>
+					);
+				})}
 				{results && results.messages.length > 0 && (
 					<section className="group">
 						<h3>Messages</h3>
@@ -462,7 +498,7 @@ export const Drawer = memo(function Drawer({
 								// p2 indexes subagent messages too: a hit opens the conversation it was found in, at the message.
 								onClick={() => {
 									requestReveal(hit.session, hit.conversationId, hit.entryId);
-									if (archived) restore(hit.session, hit.conversationId);
+									if (archived) onRestore(hit.session, hit.conversationId);
 									else onOpen(hit.session, hit.conversationId);
 								}}
 							>
@@ -487,20 +523,8 @@ export const Drawer = memo(function Drawer({
 				>
 					Archived
 				</button>
-				{footer ?? (
-					<>
-						<button type="button" className="foot-button" onClick={onProviders}>
-							Providers
-						</button>
-						<button type="button" className="foot-button" onClick={onEnvs} title="Remote environments">
-							Envs
-						</button>
-						<button type="button" className="foot-button" onClick={onOwnerLink} title="Sign in another device">
-							Devices
-						</button>
-					</>
-				)}
 				<span className="spacer" />
+				{actions}
 				<ThemeButton />
 			</div>
 		</nav>

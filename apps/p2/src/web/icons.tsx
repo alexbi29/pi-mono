@@ -94,6 +94,13 @@ export const FolderIcon = ({ size = 16 }: { size?: number }) => (
 		<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
 	</Icon>
 );
+/** A padlock: a sandboxed environment. */
+export const LockIcon = ({ size = 14 }: { size?: number }) => (
+	<Icon size={size}>
+		<rect x="5" y="11" width="14" height="10" rx="2" />
+		<path d="M8 11V7a4 4 0 0 1 8 0v4" />
+	</Icon>
+);
 /** A window with a prompt. */
 export const TerminalIcon = ({ size = 15 }: { size?: number }) => (
 	<Icon size={size}>
@@ -112,8 +119,8 @@ export const CommentIcon = () => (
 		<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z" />
 	</Icon>
 );
-export const ReplyIcon = () => (
-	<Icon size={16}>
+export const ReplyIcon = ({ size = 16 }: { size?: number }) => (
+	<Icon size={size}>
 		<path d="M9 14 4 9l5-5" />
 		<path d="M4 9h11a5 5 0 0 1 5 5v3" />
 	</Icon>
@@ -143,7 +150,7 @@ export const PencilIcon = () => (
 		<path d="M4 20h4L19 9l-4-4L4 16z" />
 	</Icon>
 );
-/** Angle brackets: code mode scripts. */
+/** Angle brackets: scripts. */
 export const CodeIcon = () => (
 	<Icon size={15}>
 		<path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />
@@ -192,6 +199,13 @@ export const SunIcon = () => (
 export const MoonIcon = () => (
 	<Icon size={16}>
 		<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
+	</Icon>
+);
+/** A gear: the server's settings. */
+export const SettingsIcon = () => (
+	<Icon size={16}>
+		<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z" />
+		<circle cx="12" cy="12" r="3" />
 	</Icon>
 );
 /** Half-filled circle: follow the system light/dark setting. */

@@ -1,14 +1,14 @@
 // Main-view controls exercise real browser events against fake providers and disposable data.
 
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { BACKGROUND_CONTEXT } from "@p2/app/v1";
 import { Chat } from "../../plugins/chat/contract.ts";
 import { Sessions } from "../../plugins/sessions/contract.ts";
 import { Browser, browserTests } from "./browser.ts";
-import { type Fixture, holdIn, startFixture, until } from "./helpers.ts";
+import { type Fixture, holdIn, poll, startFixture, until } from "./helpers.ts";
 
 const input = (selector: string, value: string) =>
 	`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`;
@@ -22,6 +22,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 			).create({ cwd: fixture.workspace, title: "Control parity" }, BACKGROUND_CONTEXT)
 		).id;
 		browser = await Browser.start();
+		await browser.signIn(fixture.owner);
 	});
 	after(async () => {
 		await browser?.close();
@@ -41,6 +42,7 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(`document.querySelector('[role=dialog][aria-label=Model]')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
 		const second = await Browser.start();
+		await second.signIn(fixture.owner);
 		try {
 			await second.open(`http://127.0.0.1:${fixture.server.port}/s/${id}`);
 			await browser.wait(`document.querySelector('.session-stats .client-count')?.textContent.trim()==='2'`);
@@ -56,6 +58,18 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`document.querySelector('.messages .assistant')?.textContent.includes('Echo: hello controls') && document.querySelector('.cost-link')`,
 		);
+		// The sent message and the answer show their time, with the full moment as the tooltip; the message has Copy.
+		const times = await browser.evaluate<{ actions: string[]; sent: number; title: boolean }[]>(
+			`[...document.querySelectorAll('.messages .user, .messages .assistant')].filter((e) => e.querySelector('.message-actions')).map((e) => { const time = e.querySelector('.message-actions .message-time'); return { actions: [...e.querySelector('.message-actions').children].map((child) => child.classList.contains('message-time') ? 'time' : child.getAttribute('aria-label')), sent: Date.now() - Date.parse(time.dateTime), title: Boolean(time.title) }; })`,
+		);
+		assert.deepEqual(
+			times.map(({ actions, title }) => ({ actions: actions.filter((action) => action !== "Reply"), title })),
+			[
+				{ actions: ["time", "Edit", "Copy"], title: true },
+				{ actions: ["Copy", "Branch from here", "time"], title: true },
+			],
+		);
+		assert.ok(times.every(({ sent }) => sent >= 0 && sent < 60_000));
 		await browser.click(".cost-link");
 		await browser.wait(`document.querySelector('.cost-table tbody tr')`);
 		await browser.click("[role=dialog] button[aria-label=Close]");
@@ -155,11 +169,13 @@ describe("chat control parity", { skip: !browserTests }, () => {
 		await browser.wait(
 			`[...document.querySelectorAll('.bubble-files span')].map(e=>e.textContent).join()==='image.png,pasted-image.png' && !document.querySelector('.attachment')`,
 		);
-		assert.deepEqual(
+		// The message shows before it is sent (plugins/chat/outbox.ts), even before the conversation has loaded; the
+		// uploads follow once its chat object is live.
+		const uploaded = () =>
 			readdirSync(join(fixture.dataDir, "uploads", pasted))
 				.map((file) => file.slice(37))
-				.sort(),
-			["image.png", "pasted-image.png"],
-		);
+				.sort();
+		await poll(() => existsSync(join(fixture.dataDir, "uploads", pasted)) && uploaded().length === 2);
+		assert.deepEqual(uploaded(), ["image.png", "pasted-image.png"]);
 	});
 });

@@ -9,7 +9,9 @@ import { RelayAccess } from "./relay-access.ts";
 /** Pi Mobile's status lines: the brain it connected as, or why it is not connected (retrying). */
 export function radiusStatusText(status: RadiusStatus): string {
 	return status.status === "connected"
-		? `connected as brain ${status.serverId}`
+		? status.name === undefined
+			? `connected as brain ${status.serverId}`
+			: `connected as brain ${status.name}`
 		: status.status === "retrying"
 			? `not connected (${status.error})`
 			: "";
@@ -50,7 +52,7 @@ export default defineFacet((host) => {
 					origin: relayed.publicOrigin,
 					remote: true,
 					port: server.info.value.port,
-					relayShellOrigin: relayed.shellOrigin,
+					...(relayed.shellOrigin === undefined ? {} : { relayShellOrigin: relayed.shellOrigin }),
 				};
 				// Anyone else is whom sharing finds by their email (the sessions shared with them), or nobody.
 				return relayed.user === undefined
