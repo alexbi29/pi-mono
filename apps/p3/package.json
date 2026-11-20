@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/p3",
-	"version": "1.5.2-1",
+	"version": "1.5.2-2",
 	"private": true,
 	"description": "p3: one Pi per person (the server, its command `p3`, and the API plugins import)",
 	"type": "module",
@@ -46,14 +46,14 @@
 		"node": ">=26.3.1"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "1.5.2-1",
-		"@earendil-works/pi-schema": "1.5.2-1",
-		"@earendil-works/pi-telemetry": "1.5.2-1",
+		"@earendil-works/chord": "1.5.2-2",
+		"@earendil-works/pi-schema": "1.5.2-2",
+		"@earendil-works/pi-telemetry": "1.5.2-2",
 		"esbuild": "0.28.2",
 		"ws": "8.21.0"
 	},
 	"devDependencies": {
-		"@earendil-works/pi-ai": "1.5.2-1",
-		"@earendil-works/pi-durable": "1.5.2-1"
+		"@earendil-works/pi-ai": "1.5.2-2",
+		"@earendil-works/pi-durable": "1.5.2-2"
 	}
 }
