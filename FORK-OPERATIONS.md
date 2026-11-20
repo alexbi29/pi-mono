@@ -55,8 +55,6 @@ Fork-only source files (keep patch surface small):
 - `packages/coding-agent/package.json` - `bundledDependencies` (fork metadata, see below)
 - `packages/ai/src/telemetry-contract.ts` - vendored inert telemetry contract (see above)
 - `scripts/fork-pack-closure.mjs` - runner dependency closure staging (see below)
-- `scripts/package-workspaces.mjs` - skips `test/` so chord fixture packages (non-private
-  `1.0.0`) do not fail `sync-versions.js` lockstep validation; drop once upstream fixes it
 
 ## Distribution
 

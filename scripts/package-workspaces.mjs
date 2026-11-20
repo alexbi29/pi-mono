@@ -1,8 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// test/ holds fixture packages (for example chord plugin examples) that are not workspaces.
-const SKIPPED_DIRECTORIES = new Set(["dist", "node_modules", "test"]);
+const SKIPPED_DIRECTORIES = new Set(["dist", "node_modules"]);
 
 export function findPackageDirectories(root = "packages") {
 	const packageDirectories = [];
